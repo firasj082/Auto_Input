@@ -158,6 +158,15 @@ pub fn update_hook_hotkeys(app_handle: AppHandle, record_key: String, start_key:
     let start_vk = string_to_vk(&start_key)
         .ok_ok_or_else(|| format!("Invalid key name: {}", start_key))?;
 
+    // --- NEW CODE ADDED HERE ---
+    // Update the recorder to ignore the record toggle hotkey so it doesn't record its own trigger
+    if let Some(r) = RECORDER.get() {
+        if let Ok(mut recorder) = r.lock() {
+            recorder.set_ignored_keys(std::collections::HashSet::from([record_vk]));
+        }
+    }
+    // ---------------------------
+
     set_hook_hotkeys(record_vk, start_vk);
     crate::engine::shortcut::register_hotkeys(&app_handle, &record_key, &start_key)?;
     Ok(())

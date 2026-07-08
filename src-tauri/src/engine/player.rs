@@ -4,9 +4,10 @@
 //! events and manual click actions. Uses Win32 SendInput for simulated inputs.
 //! Enforces precise sleeping intervals using multimedia high-resolution timer.
 
+use crate::engine::constants::MIN_HOLD_MS;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
@@ -26,6 +27,14 @@ use crate::engine::keycodes::string_to_vk;
 
 /// Atomic flag used to request abort of running macro playback.
 pub static PLAYBACK_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// True while a playback thread is actively running. Makes `start_playback`
+/// idempotent — a re-entrant call (e.g. a synthetic key dispatched by
+/// playback looping back through a global hotkey, or a UI button firing
+/// twice) is ignored instead of spawning a second, overlapping player
+/// thread, which is what causes a single recorded key to be replayed
+/// more than once.
+pub static PLAYBACK_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// Helper to simulate a keyboard press or release.
 fn send_keyboard_input(vk: u32, down: bool) {
@@ -132,6 +141,71 @@ fn execute_playback_event(event: &PlaybackEvent) {
     }
 }
 
+/// Replays a single recorded action-set (`SequenceItem::Recorded`).
+///
+/// Applies the sequence's `playback_scale` to the gaps between events, and
+/// enforces `MIN_HOLD_MS` as a floor on every physical press so a scaled-down
+/// or naturally fast down→up pair still registers as a real press in the
+/// target application/game.
+///
+/// Returns `true` if playback was cancelled partway through.
+fn play_recorded_events(events: &[PlaybackEvent], playback_scale: f64) -> bool {
+    // Instant each key/button went down, keyed by a namespaced id so a key
+    // name (e.g. "A") can never collide with a mouse button's debug string.
+    let mut last_down_time: std::collections::HashMap<String, Instant> =
+        std::collections::HashMap::new();
+    let mut prev_t: u32 = 0;
+
+    for event in events {
+        if PLAYBACK_CANCEL.load(Ordering::SeqCst) {
+            return true;
+        }
+
+        // Apply scale to the event's relative timestamp offset.
+        let delta_t = (playback_scale * (event.t - prev_t) as f64) as u32;
+        if delta_t > 0 && sleep_check_cancel(delta_t) {
+            return true;
+        }
+        prev_t = event.t;
+
+        // If this is a release, look up when the matching press landed.
+        let held_id = match event.kind.as_str() {
+            "keyup" => event.key.as_ref().map(|k| format!("key:{}", k)),
+            "mouseup" => event.button.map(|b| format!("mouse:{:?}", b)),
+            _ => None,
+        };
+
+        if let Some(id) = held_id {
+            if let Some(down_at) = last_down_time.remove(&id) {
+                let held_ms = down_at.elapsed().as_millis() as u32;
+                if held_ms < MIN_HOLD_MS && sleep_check_cancel(MIN_HOLD_MS - held_ms) {
+                    return true;
+                }
+            }
+        }
+
+        execute_playback_event(event);
+
+        // Record dispatch time AFTER sending the down event, so "held" is
+        // measured from when the OS actually saw the press.
+        match event.kind.as_str() {
+            "keydown" => {
+                if let Some(ref key_name) = event.key {
+                    last_down_time.insert(format!("key:{}", key_name), Instant::now());
+                }
+            }
+            "mousedown" => {
+                if let Some(button) = event.button {
+                    last_down_time.insert(format!("mouse:{:?}", button), Instant::now());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
 /// Sleeps for a duration, checking the cancel flag every 10ms.
 /// Returns true if cancelled.
 fn sleep_check_cancel(total_ms: u32) -> bool {
@@ -222,10 +296,18 @@ pub fn start_playback(
     sequence: MacroSequence,
     app_handle: AppHandle,
 ) {
+
+    if PLAYBACK_ACTIVE
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
     PLAYBACK_CANCEL.store(false, Ordering::SeqCst);
     set_hook_state(4); // 4 = STATE_PLAYING
 
-    let _ = thread::Builder::new()
+    let spawn_result = thread::Builder::new()
         .name("player-thread".to_string())
         .spawn(move || {
             // Collect all keyboard keys used in the sequence for release on cancel
@@ -265,9 +347,25 @@ pub fn start_playback(
                 unsafe { let _ = windows::Win32::Media::timeEndPeriod(1); }
                 set_hook_state(0);
                 let _ = app_handle.emit("playback-state-changed", false);
+                PLAYBACK_ACTIVE.store(false, Ordering::SeqCst);
                 return;
             }
             let repeat_config = sequence.repeat.clone();
+            eprintln!(
+                "[DEBUG] repeat.mode={} repeat.count={} items={}",
+                repeat_config.mode, repeat_config.count, sequence.items.len()
+            );
+            for (i, item) in sequence.items.iter().enumerate() {
+                match item {
+                    SequenceItem::Manual { key, .. } => eprintln!("  item[{i}] Manual key={key}"),
+                    SequenceItem::Recorded { events, .. } => {
+                        eprintln!("  item[{i}] Recorded events={}", events.len());
+                        for (j, ev) in events.iter().enumerate() {
+                            eprintln!("    event[{j}] t={} kind={} key={:?} button={:?}", ev.t, ev.kind, ev.key, ev.button);
+                        }
+                    }
+                }
+            }
             let mut loop_count = 0;
             let mut aborted = false;
 
@@ -304,29 +402,14 @@ pub fn start_playback(
                                 send_keyboard_input(vk, false);
                             }
                         }
-                        SequenceItem::Recorded { playback_scale, events, .. } => {
-                            let mut prev_t = 0;
-                            for event in events {
-                                if PLAYBACK_CANCEL.load(Ordering::SeqCst) {
-                                    aborted = true;
-                                    break;
-                                }
-
-                                // Apply scale to event relative timestamp offset
-                                let delta_t = (*playback_scale * (event.t - prev_t) as f64) as u32;
-                                if delta_t > 0 {
-                                    if sleep_check_cancel(delta_t) {
-                                        aborted = true;
-                                        break;
-                                    }
-                                }
-                                prev_t = event.t;
-
-                                execute_playback_event(event);
-                            }
+                    SequenceItem::Recorded { playback_scale, events, .. } => {
+                        if play_recorded_events(events, *playback_scale) {
+                            aborted = true;
+                            break;
                         }
                     }
-                }
+                    } // closes `match item { .. }`
+                } // closes `for item in &sequence.items { .. }`  <-- this one was missing
 
                 if aborted {
                     break;
@@ -353,7 +436,16 @@ pub fn start_playback(
 
             // Notify frontend that playback finished
             let _ = app_handle.emit("playback-state-changed", false);
+            PLAYBACK_ACTIVE.store(false, Ordering::SeqCst);
         });
+
+            // If the OS couldn't spawn the thread at all, the cleanup inside the
+    // closure never runs — reset the guards here or the app stays wedged,
+    // refusing all future playback.
+    if spawn_result.is_err() {
+        PLAYBACK_ACTIVE.store(false, Ordering::SeqCst);
+        set_hook_state(0);
+    }
 }
 
 /// Signals active playback execution to abort immediately.

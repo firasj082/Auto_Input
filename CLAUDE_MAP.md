@@ -4,7 +4,9 @@
 
 ## Root (./)
 - `.gitignore` [config]
+- `app_output.txt`
 - `CLAUDE_MAP.md`
+- `hook_log.txt`
 - `index.html`
 - `overlay.html`
 - `package-lock.json`
@@ -83,6 +85,9 @@
 - `tray.rs` — System tray menu configuration.
   exports: create_tray
 
+##### src-tauri/src/bin/
+- `test_hook.rs`
+
 ##### src-tauri/src/engine/
 - `constants.rs` — Global constants for the macro recording and playback engine.
 - `hook.rs` — Low-level Win32 input hook.
@@ -98,7 +103,9 @@
   exports: Recorder, start, record_event, stop
 - `schema.rs` — Macro data schema definition.
   exports: PlaybackEvent, SequenceItem, RepeatConfig, HotkeysConfig
+- `shortcut.rs` — Global shortcut manager for hotkey triggers.
+  exports: key_name_to_code, init_global_shortcuts, register_hotkeys
 - `state.rs` — Application state machine.
   exports: HotkeyTarget, AppState, EngineState, new
 
-> 53 files mapped across 10 directories.
+> 57 files mapped across 11 directories.

@@ -5,7 +5,8 @@
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// Spawns a transparent borderless click-through overlay window on every detected monitor.
+/// Shows a transparent borderless click-through overlay window on every detected monitor.
+/// Re-uses existing windows if they were hidden from a previous recording session.
 ///
 /// # Thread Safety
 /// Must be called from the Tauri main thread.
@@ -19,8 +20,13 @@ pub fn show_overlays(app_handle: &AppHandle) {
 
         let label = format!("overlay-{}", index);
 
-        // Skip spawning if window already exists
-        if app_handle.get_webview_window(&label).is_some() {
+        // If the overlay window already exists (hidden from a previous session), re-show it
+        if let Some(window) = app_handle.get_webview_window(&label) {
+            let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
+            let _ = window.show();
+            let _ = window.set_always_on_top(true);
+            let _ = window.set_ignore_cursor_events(true);
             continue;
         }
 
@@ -50,16 +56,16 @@ pub fn show_overlays(app_handle: &AppHandle) {
     }
 }
 
-/// Closes and destroys all active overlay windows.
+/// Hides all active overlay windows (without destroying them so they can be re-shown).
 ///
 /// # Thread Safety
 /// Must be called from the Tauri main thread.
 pub fn hide_overlays(app_handle: &AppHandle) {
-    // Probe and close up to 16 monitor overlays
+    // Probe and hide up to 16 monitor overlays
     for index in 0..16 {
         let label = format!("overlay-{}", index);
         if let Some(window) = app_handle.get_webview_window(&label) {
-            let _ = window.close();
+            let _ = window.hide();
         }
     }
 }

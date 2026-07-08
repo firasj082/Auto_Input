@@ -14,3 +14,4 @@ pub const OVERLAY_TIMER_TICK_MS: u64 = 1_000; // mm:ss timer tick interval
 // SAFETY: Named constants representing injected event flags in Win32 low-level hooks.
 pub const LLKHF_INJECTED: u32 = 0x00000010;
 pub const LLMHF_INJECTED: u32 = 0x00000001;
+pub const MIN_HOLD_MS: u32 = 50;

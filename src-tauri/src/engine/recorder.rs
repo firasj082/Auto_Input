@@ -22,9 +22,25 @@ struct RecordedEvent {
 pub struct Recorder {
     start_time: Option<Instant>,
     events: Vec<RecordedEvent>,
+    pressed_keys: std::collections::HashSet<u32>,
+    /// VK codes that must never be captured, even while the hook is active —
+    /// e.g. the global hotkey bound to start/stop recording. Without this,
+    /// pressing that hotkey to *stop* recording gets its own keydown/keyup
+    /// swept into the sequence (there's no matching partner, since recording
+    /// ends mid-press), and replaying that synthetic key during playback can
+    /// re-trigger the same global hotkey.
+    ignored_keys: std::collections::HashSet<u32>,
 }
 
 impl Recorder {
+    /// Sets which VK codes should be silently dropped instead of recorded.
+    /// Call this with your current control-hotkey VK(s) (record toggle,
+    /// panic/stop, etc.) whenever they're configured or changed — it's
+    /// independent of `start()`/`stop()` so existing call sites don't break.
+    pub fn set_ignored_keys(&mut self, keys: std::collections::HashSet<u32>) {
+        self.ignored_keys = keys;
+    }
+
     /// Resets the recorder and starts the recording timer.
     ///
     /// # Thread Safety
@@ -32,6 +48,9 @@ impl Recorder {
     pub fn start(&mut self) {
         self.start_time = Some(Instant::now());
         self.events.clear();
+        self.pressed_keys.clear();
+        // ignored_keys is intentionally left as-is here; set it separately
+        // via set_ignored_keys() so callers don't need to pass it every time.
     }
 
     /// Records a system-level input event with its relative time offset.
@@ -40,6 +59,24 @@ impl Recorder {
     /// Safely handles inputs sequentially.
     pub fn record_event(&mut self, raw_event: RawInputEvent, event_time: Instant) {
         if let Some(start) = self.start_time {
+            if let RawInputEvent::Keyboard { vk, down } = raw_event {
+                // Never record the app's own control hotkeys — pressing them
+                // is a command to the app, not part of the macro being recorded.
+                if self.ignored_keys.contains(&vk) {
+                    return;
+                }
+
+                // Filter out keyboard auto-repeat events
+                if down {
+                    if self.pressed_keys.contains(&vk) {
+                        return; // Ignore repeated auto-repeat event
+                    }
+                    self.pressed_keys.insert(vk);
+                } else {
+                    self.pressed_keys.remove(&vk);
+                }
+            }
+
             // Calculate millisecond offset since recording started
             let elapsed = event_time.saturating_duration_since(start).as_millis() as u32;
             self.events.push(RecordedEvent {
@@ -61,11 +98,8 @@ impl Recorder {
 
         self.start_time = None;
 
-        // No compaction needed — mouse movements are no longer recorded,
-        // only clicks and keyboard events.
         let raw_events = std::mem::take(&mut self.events);
 
-        // Map internal events to the PlaybackEvent data shape
         let playback_events: Vec<PlaybackEvent> = raw_events
             .into_iter()
             .map(|evt| {
@@ -106,7 +140,6 @@ impl Recorder {
             })
             .collect();
 
-        // Generate dynamic label for the recorded set
         let label = format!("Action Set {}", Uuid::new_v4().to_string()[..4].to_uppercase());
 
         SequenceItem::Recorded {
