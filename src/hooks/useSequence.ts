@@ -43,17 +43,6 @@ interface UseSequenceReturn {
   getExportProfile: () => MacroProfile;
 }
 
-function createDefaultProfile(): MacroProfile {
-  return {
-    version: 1,
-    appId: "macro-app",
-    hotkeys: { recordToggle: "F9", startSequence: "F10" },
-    sequence: {
-      repeat: { mode: "count", count: 1 },
-      items: [],
-    },
-  };
-}
 
 export function useSequence(): UseSequenceReturn {
   const [items, setItems] = useState<SequenceItem[]>([]);

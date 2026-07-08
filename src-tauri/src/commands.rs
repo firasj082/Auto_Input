@@ -110,10 +110,34 @@ pub fn save_macro_profile(profile: MacroProfile, app_handle: AppHandle) -> Resul
     crate::storage::save_profile(&app_handle, &profile)
 }
 
+/// Command to save a profile configuration to a custom file path.
+#[tauri::command]
+pub fn save_macro_profile_to_path(profile: MacroProfile, path: String) -> Result<(), String> {
+    let content = serde_json::to_string_pretty(&profile)
+        .map_err(|e| format!("failed to serialize profile: {}", e))?;
+    std::fs::write(&path, content)
+        .map_err(|e| format!("failed to write profile file to path {}: {}", path, e))?;
+    Ok(())
+}
+
 /// Command to load the active profile configuration.
 #[tauri::command]
 pub fn load_macro_profile(app_handle: AppHandle) -> Result<MacroProfile, String> {
     crate::storage::load_profile(&app_handle)
+}
+
+/// Command to load a profile configuration from a custom file path.
+#[tauri::command]
+pub fn load_macro_profile_from_path(path: String) -> Result<MacroProfile, String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(&path)
+        .map_err(|e| format!("failed to open profile file at {}: {}", path, e))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("failed to read profile file: {}", e))?;
+    let profile: MacroProfile = serde_json::from_str(&content)
+        .map_err(|e| format!("failed to parse profile JSON: {}", e))?;
+    Ok(profile)
 }
 
 /// Command to apply updated record/start hotkeys to the low-level hook filter.

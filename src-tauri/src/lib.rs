@@ -29,7 +29,9 @@ pub fn run() {
             commands::listen_for_hotkey,
             commands::cancel_listen_for_hotkey,
             commands::save_macro_profile,
+            commands::save_macro_profile_to_path,
             commands::load_macro_profile,
+            commands::load_macro_profile_from_path,
             commands::update_hook_hotkeys,
         ])
         .on_window_event(|window, event| {
