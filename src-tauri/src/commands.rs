@@ -6,7 +6,6 @@
 
 use std::sync::atomic::Ordering;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::engine::hook::{
@@ -16,7 +15,7 @@ use crate::engine::keycodes::{string_to_vk, vk_to_string};
 use crate::engine::player::{start_playback, stop_playback};
 use crate::engine::recorder::Recorder;
 use crate::engine::schema::{MacroProfile, MacroSequence, SequenceItem};
-use crate::engine::constants::PANIC_HOLD_MS;
+
 
 static RECORDER: OnceLock<Mutex<Recorder>> = OnceLock::new();
 
@@ -140,15 +139,16 @@ pub fn load_macro_profile_from_path(path: String) -> Result<MacroProfile, String
     Ok(profile)
 }
 
-/// Command to apply updated record/start hotkeys to the low-level hook filter.
+/// Command to apply updated record/start hotkeys to the low-level hook filter and the global shortcut manager.
 #[tauri::command]
-pub fn update_hook_hotkeys(record_key: String, start_key: String) -> Result<(), String> {
+pub fn update_hook_hotkeys(app_handle: AppHandle, record_key: String, start_key: String) -> Result<(), String> {
     let record_vk = string_to_vk(&record_key)
         .ok_ok_or_else(|| format!("Invalid key name: {}", record_key))?;
     let start_vk = string_to_vk(&start_key)
         .ok_ok_or_else(|| format!("Invalid key name: {}", start_key))?;
 
     set_hook_hotkeys(record_vk, start_vk);
+    crate::engine::shortcut::register_hotkeys(&app_handle, &record_key, &start_key)?;
     Ok(())
 }
 
@@ -168,17 +168,14 @@ impl<T> OptionExt<T> for Option<T> {
 pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: AppHandle) {
     let _ = thread_builder("event-consumer-thread")
         .spawn(move || {
-            let mut escape_hold_start: Option<Instant> = None;
-
             loop {
-                // 50ms read timeout enables background check on Escape hold duration
-                let timeout = Duration::from_millis(50);
-                match rx.recv_timeout(timeout) {
+                match rx.recv() {
                     Ok(hook_event) => {
                         let state = STATE.load(Ordering::SeqCst);
                         
                         match hook_event.event {
                             RawInputEvent::RecordTogglePressed => {
+                                eprintln!("[CONSUMER] RecordTogglePressed. Current state: {}", state);
                                 if state == 0 {
                                     let _ = start_recording(app_handle.clone());
                                 } else if state == 3 {
@@ -188,6 +185,7 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                                 }
                             }
                             RawInputEvent::StartSequencePressed => {
+                                eprintln!("[CONSUMER] StartSequencePressed. Current state: {}", state);
                                 if state == 0 {
                                     let _ = app_handle.emit("trigger-playback", ());
                                 } else if state == 4 {
@@ -208,20 +206,21 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                                         }
                                     }
                                 } else if state == 3 {
-                                    if let Some(r) = RECORDER.get() {
+                                    if vk == 0x1B {
+                                        if down {
+                                            // Escape immediately stops recording (panic/emergency key)
+                                            let _ = stop_recording(app_handle.clone());
+                                        }
+                                    } else if let Some(r) = RECORDER.get() {
                                         if let Ok(mut recorder) = r.lock() {
                                             recorder.record_event(RawInputEvent::Keyboard { vk, down }, hook_event.time);
                                         }
                                     }
                                 } else if state == 4 {
-                                    // Playback Escape hold check
                                     if vk == 0x1B {
                                         if down {
-                                            if escape_hold_start.is_none() {
-                                                escape_hold_start = Some(Instant::now());
-                                            }
-                                        } else {
-                                            escape_hold_start = None;
+                                            // Escape immediately stops playback (panic/emergency key)
+                                            let _ = stop_playback();
                                         }
                                     }
                                 }
@@ -237,21 +236,7 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                             }
                         }
                     }
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                        let state = STATE.load(Ordering::SeqCst);
-                        if state == 4 {
-                            if let Some(start) = escape_hold_start {
-                                if start.elapsed().as_millis() >= PANIC_HOLD_MS as u128 {
-                                    // Trigger emergency abort
-                                    let _ = stop_playback();
-                                    escape_hold_start = None;
-                                }
-                            }
-                        } else {
-                            escape_hold_start = None;
-                        }
-                    }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                    Err(_) => {
                         break;
                     }
                 }

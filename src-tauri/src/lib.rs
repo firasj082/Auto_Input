@@ -45,6 +45,17 @@ pub fn run() {
             // Initialize global recorder mutex
             commands::init_recorder();
 
+            // Initialize global shortcuts plugin
+            if let Err(e) = engine::shortcut::init_global_shortcuts(app) {
+                eprintln!("failed to initialize global shortcuts: {}", e);
+            }
+
+            // Register default hotkeys (F9=Record, F10=Start) immediately
+            // These will be overridden when the profile loads from disk.
+            if let Err(e) = engine::shortcut::register_hotkeys(app.handle(), "F9", "F10") {
+                eprintln!("failed to register default hotkeys: {}", e);
+            }
+
             // Create tray icon
             if let Err(e) = tray::create_tray(app) {
                 eprintln!("failed to create system tray: {}", e);

@@ -8,10 +8,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::OnceLock;
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
-use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    TranslateMessage, DispatchMessageW, PeekMessageW, PM_NOREMOVE,
     KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL,
     WM_KEYDOWN, WM_SYSKEYDOWN,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
@@ -128,53 +128,24 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let down = wparam.0 as u32 == WM_KEYDOWN as u32 || wparam.0 as u32 == WM_SYSKEYDOWN as u32;
         
         let state = STATE.load(Ordering::SeqCst);
-        let record_vk = RECORD_TOGGLE_VK.load(Ordering::SeqCst);
-        let start_vk = START_SEQUENCE_VK.load(Ordering::SeqCst);
-
         let mut swallow = false;
 
         // 1 & 2 represent Configuring states (ConfiguringRecord & ConfiguringStart)
         if state == 1 || state == 2 {
-            swallow = true;
-            if down {
+            // Do NOT swallow the key or send it to the event channel.
+            // Let it pass through to the WebView so the browser's keydown handler captures it.
+            swallow = false;
+        } else {
+            // Only send standard keyboard events if recording, or if playing and the key is ESC (panic key)
+            if state == 3 || (state == 4 && vk == 0x1B) {
+                if vk == 0x1B {
+                    swallow = true;
+                }
                 if let Some(tx) = EVENT_TX.get() {
                     let _ = tx.try_send(HookEvent {
-                        event: RawInputEvent::Keyboard { vk, down: true },
+                        event: RawInputEvent::Keyboard { vk, down },
                         time: Instant::now(),
                     });
-                }
-            }
-        } else {
-            if vk == record_vk {
-                swallow = true;
-                if down {
-                    if let Some(tx) = EVENT_TX.get() {
-                        let _ = tx.try_send(HookEvent {
-                            event: RawInputEvent::RecordTogglePressed,
-                            time: Instant::now(),
-                        });
-                    }
-                }
-            } else if vk == start_vk {
-                swallow = true;
-                if down {
-                    if let Some(tx) = EVENT_TX.get() {
-                        let _ = tx.try_send(HookEvent {
-                            event: RawInputEvent::StartSequencePressed,
-                            time: Instant::now(),
-                        });
-                    }
-                }
-            } else {
-                // Only send standard keyboard events if recording, or if playing and the key is ESC (panic key)
-                // ASSUMPTION: Escape is the global panic key
-                if state == 3 || (state == 4 && vk == 0x1B) {
-                    if let Some(tx) = EVENT_TX.get() {
-                        let _ = tx.try_send(HookEvent {
-                            event: RawInputEvent::Keyboard { vk, down },
-                            time: Instant::now(),
-                        });
-                    }
                 }
             }
         }
@@ -248,20 +219,21 @@ pub fn start_hooks(tx: crossbeam_channel::Sender<HookEvent>) -> Result<(), Strin
         .spawn(move || {
             // SAFETY: Accessing Win32 API to register system hooks.
             unsafe {
-                let h_module = GetModuleHandleW(None).expect("failed to get current module handle");
-                let h_instance = HINSTANCE(h_module.0);
-                
+                // Force the creation of a message queue for this background thread
+                let mut msg = MSG::default();
+                let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
+
                 let khook = SetWindowsHookExW(
                     WH_KEYBOARD_LL,
                     Some(keyboard_proc),
-                    Some(h_instance),
+                    None,
                     0,
                 ).expect("failed to set low-level keyboard hook");
                 
                 let mhook = SetWindowsHookExW(
                     WH_MOUSE_LL,
                     Some(mouse_proc),
-                    Some(h_instance),
+                    None,
                     0,
                 ).expect("failed to set low-level mouse hook");
 
@@ -271,7 +243,8 @@ pub fn start_hooks(tx: crossbeam_channel::Sender<HookEvent>) -> Result<(), Strin
                 // Start Win32 message loop to process hook events
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                    // Message loop runs until WM_QUIT is posted
+                    let _ = TranslateMessage(&msg);
+                    let _ = DispatchMessageW(&msg);
                 }
 
                 // Uninstall hooks on shutdown

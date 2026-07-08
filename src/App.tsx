@@ -52,6 +52,10 @@ export default function App() {
     const params = new URLSearchParams(window.location.search);
     if (params.get("overlay") === "true") {
       setIsOverlayMode(true);
+      document.body.style.background = "transparent";
+      document.body.style.backgroundColor = "transparent";
+      document.documentElement.style.background = "transparent";
+      document.documentElement.style.backgroundColor = "transparent";
     }
   }, []);
 
@@ -212,6 +216,7 @@ export default function App() {
             isListening={isListening === "recordToggle"}
             onStartListening={() => handleStartListening("recordToggle")}
             onCancelListening={handleCancelListening}
+            onKeyCapture={(keyName) => handleKeyCapture("recordToggle", keyName)}
           />
           <HotkeyField
             label="Start Sequence"
@@ -219,6 +224,7 @@ export default function App() {
             isListening={isListening === "startSequence"}
             onStartListening={() => handleStartListening("startSequence")}
             onCancelListening={handleCancelListening}
+            onKeyCapture={(keyName) => handleKeyCapture("startSequence", keyName)}
           />
 
           <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
@@ -359,6 +365,12 @@ export default function App() {
   }
 
   function handleCancelListening() {
+    cancelListenForHotkey();
+  }
+
+  function handleKeyCapture(target: "recordToggle" | "startSequence", keyName: string) {
+    const updated = { ...hotkeys, [target]: keyName };
+    setHotkeys(updated);
     cancelListenForHotkey();
   }
 }

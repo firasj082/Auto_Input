@@ -159,7 +159,12 @@ pub fn start_playback(
             unsafe {
                 let _ = windows::Win32::Media::timeBeginPeriod(1);
             }
-
+            if sleep_check_cancel(1500) {
+                unsafe { let _ = windows::Win32::Media::timeEndPeriod(1); }
+                set_hook_state(0);
+                let _ = app_handle.emit("playback-state-changed", false);
+                return;
+            }
             let repeat_config = sequence.repeat.clone();
             let mut loop_count = 0;
             let mut aborted = false;

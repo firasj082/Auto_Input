@@ -29,4 +29,15 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Build both the main app and the recording overlay as separate pages,
+  // so the overlay window never loads the full App/useSequence tree.
+  build: {
+    rollupOptions: {
+      input: {
+        main: "index.html",
+        overlay: "overlay.html",
+      },
+    },
+  },
 }));
