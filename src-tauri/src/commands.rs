@@ -28,6 +28,11 @@ pub fn init_recorder() {
 /// Spawns click-through overlays on all monitors.
 #[tauri::command]
 pub fn start_recording(app_handle: AppHandle) -> Result<(), String> {
+    let state = STATE.load(Ordering::SeqCst);
+    if state != 0 {
+        return Ok(()); // Already recording or playing, ignore
+    }
+
     set_hook_state(3); // 3 = STATE_RECORDING
 
     if let Some(r) = RECORDER.get() {
@@ -51,6 +56,11 @@ pub fn start_recording(app_handle: AppHandle) -> Result<(), String> {
 /// Closes all overlays and returns the compiled SequenceItem.
 #[tauri::command]
 pub fn stop_recording(app_handle: AppHandle) -> Result<SequenceItem, String> {
+    let state = STATE.load(Ordering::SeqCst);
+    if state != 3 {
+        return Err("Not currently recording".to_string());
+    }
+
     set_hook_state(0); // 0 = STATE_IDLE
 
     // Close monitor overlays on the main thread
@@ -67,6 +77,7 @@ pub fn stop_recording(app_handle: AppHandle) -> Result<SequenceItem, String> {
     };
 
     let _ = app_handle.emit("recording-state-changed", false);
+    let _ = app_handle.emit("new-recorded-item", &item);
     Ok(item)
 }
 
@@ -174,25 +185,11 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                         let state = STATE.load(Ordering::SeqCst);
                         
                         match hook_event.event {
-                            RawInputEvent::RecordTogglePressed => {
-                                eprintln!("[CONSUMER] RecordTogglePressed. Current state: {}", state);
-                                if state == 0 {
-                                    let _ = start_recording(app_handle.clone());
-                                } else if state == 3 {
-                                    if let Ok(item) = stop_recording(app_handle.clone()) {
-                                        let _ = app_handle.emit("new-recorded-item", item);
-                                    }
-                                }
-                            }
-                            RawInputEvent::StartSequencePressed => {
-                                eprintln!("[CONSUMER] StartSequencePressed. Current state: {}", state);
-                                if state == 0 {
-                                    let _ = app_handle.emit("trigger-playback", ());
-                                } else if state == 4 {
-                                    let _ = stop_playback();
-                                }
-                            }
+                            // RecordTogglePressed and StartSequencePressed are handled
+                            // by the global shortcut plugin (shortcut.rs), not here.
+                            RawInputEvent::RecordTogglePressed | RawInputEvent::StartSequencePressed => {}
                             RawInputEvent::Keyboard { vk, down } => {
+                                eprintln!("[CONSUMER] Keyboard: vk = 0x{:X}, down = {}, state = {}", vk, down, state);
                                 if state == 1 || state == 2 {
                                     if down {
                                         // Intercept Escape to cancel configuring hotkeys
@@ -208,7 +205,7 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                                 } else if state == 3 {
                                     if vk == 0x1B {
                                         if down {
-                                            // Escape immediately stops recording (panic/emergency key)
+                                            eprintln!("[CONSUMER] Escape pressed during recording. Stopping...");
                                             let _ = stop_recording(app_handle.clone());
                                         }
                                     } else if let Some(r) = RECORDER.get() {
@@ -219,7 +216,7 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                                 } else if state == 4 {
                                     if vk == 0x1B {
                                         if down {
-                                            // Escape immediately stops playback (panic/emergency key)
+                                            eprintln!("[CONSUMER] Escape pressed during playback. Panic stopping...");
                                             let _ = stop_playback();
                                         }
                                     }

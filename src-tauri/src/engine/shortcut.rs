@@ -8,6 +8,7 @@
 
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use std::time::{Instant, Duration};
 use tauri::AppHandle;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 
@@ -18,6 +19,9 @@ static CURRENT_SHORTCUTS: OnceLock<Mutex<CurrentShortcuts>> = OnceLock::new();
 struct CurrentShortcuts {
     record: Option<Shortcut>,
     start: Option<Shortcut>,
+    record_held: bool,
+    start_held: bool,
+    last_trigger: Instant,
 }
 
 /// Converts our human-readable key name (e.g. "F9", "A", "Space") to a
@@ -146,6 +150,9 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
         Mutex::new(CurrentShortcuts {
             record: None,
             start: None,
+            record_held: false,
+            start_held: false,
+            last_trigger: Instant::now() - Duration::from_secs(5),
         })
     });
 
@@ -154,14 +161,8 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
     app.handle().plugin(
         tauri_plugin_global_shortcut::Builder::new()
             .with_handler(move |_app, shortcut, event| {
-                if event.state() != ShortcutState::Pressed {
-                    return;
-                }
-
-                let state = STATE.load(Ordering::SeqCst);
-
                 // Read the current shortcuts to identify which one was triggered
-                let guard = match CURRENT_SHORTCUTS.get() {
+                let mut guard = match CURRENT_SHORTCUTS.get() {
                     Some(m) => match m.lock() {
                         Ok(g) => g,
                         Err(_) => return,
@@ -171,6 +172,42 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
 
                 let is_record = guard.record.as_ref().map_or(false, |s| s == shortcut);
                 let is_start = guard.start.as_ref().map_or(false, |s| s == shortcut);
+
+                // Handle key release transitions
+                if event.state() == ShortcutState::Released {
+                    if is_record {
+                        guard.record_held = false;
+                    }
+                    if is_start {
+                        guard.start_held = false;
+                    }
+                    return;
+                }
+
+                // Handle key press transitions (detecting/preventing repeats)
+                if event.state() == ShortcutState::Pressed {
+                    if is_record {
+                        if guard.record_held {
+                            return; // Already held, ignore repeated auto-repeat event
+                        }
+                        guard.record_held = true;
+                    }
+                    if is_start {
+                        if guard.start_held {
+                            return; // Already held, ignore repeated auto-repeat event
+                        }
+                        guard.start_held = true;
+                    }
+                }
+
+                // Debounce cooldown check (backup)
+                let now = Instant::now();
+                if now.duration_since(guard.last_trigger) < Duration::from_millis(500) {
+                    return; // Ignore key repeat bounce
+                }
+                guard.last_trigger = now;
+
+                let state = STATE.load(Ordering::SeqCst);
                 drop(guard); // Release lock before doing work
 
                 if is_record {
@@ -180,9 +217,7 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
                         let _ = crate::commands::start_recording(app_handle.clone());
                     } else if state == 3 {
                         // Recording → stop recording
-                        if let Ok(item) = crate::commands::stop_recording(app_handle.clone()) {
-                            let _ = app_handle.emit("new-recorded-item", item);
-                        }
+                        let _ = crate::commands::stop_recording(app_handle.clone());
                     }
                 } else if is_start {
                     eprintln!("[SHORTCUT] Start hotkey triggered. State={}", state);

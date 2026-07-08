@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL,
     WM_KEYDOWN, WM_SYSKEYDOWN,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, HHOOK,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, HHOOK,
 };
 
 use crate::engine::constants::{LLKHF_INJECTED, LLMHF_INJECTED};
@@ -128,6 +128,9 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let down = wparam.0 as u32 == WM_KEYDOWN as u32 || wparam.0 as u32 == WM_SYSKEYDOWN as u32;
         
         let state = STATE.load(Ordering::SeqCst);
+        if state != 0 {
+            eprintln!("[KEYHOOK] vk: 0x{:X}, down: {}, state: {}", vk, down, state);
+        }
         let mut swallow = false;
 
         // 1 & 2 represent Configuring states (ConfiguringRecord & ConfiguringStart)
@@ -181,7 +184,6 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
             let msg = wparam.0 as u32;
 
             let event = match msg {
-                WM_MOUSEMOVE => Some(RawInputEvent::MouseMove { x, y }),
                 WM_LBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Left, x, y }),
                 WM_LBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Left, x, y }),
                 WM_RBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Right, x, y }),

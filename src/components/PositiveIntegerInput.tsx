@@ -66,6 +66,13 @@ export const PositiveIntegerInput: React.FC<Props> = ({
     setInputValue(clamped.toString());
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleBlur();
+      (e.target as HTMLInputElement).blur();
+    }
+  };
+
   return (
     <div className={`input-container ${className}`} style={style}>
       {label && <label className="input-label">{label}</label>}
@@ -75,6 +82,7 @@ export const PositiveIntegerInput: React.FC<Props> = ({
         value={inputValue}
         onChange={handleChange}
         onBlur={handleBlur}
+        onKeyDown={handleKeyDown}
         disabled={disabled}
       />
     </div>

@@ -306,15 +306,14 @@ body {
   animation: pulse-red 1.5s infinite;
 }
 
-/* Overlay View styling */
 .recording-overlay-bg {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(30, 80, 255, 0.08);
-  border: 4px solid rgba(30, 80, 255, 0.25);
+  background: rgba(30, 80, 255, 0.05);
+  border: none;
   pointer-events: none;
   z-index: 999999;
 }

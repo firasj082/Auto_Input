@@ -62,45 +62,69 @@ export function useSequence(): UseSequenceReturn {
 
   // Listen for backend events
   useEffect(() => {
+    let active = true;
     const unlisteners: (() => void)[] = [];
 
-    listen<boolean>("recording-state-changed", (event) => {
-      setIsRecording(event.payload);
-    }).then((unlisten) => unlisteners.push(unlisten));
+    const setupListeners = async () => {
+      try {
+        const u1 = await listen<boolean>("recording-state-changed", (event) => {
+          if (!active) return;
+          setIsRecording(event.payload);
+        });
+        unlisteners.push(u1);
 
-    listen<boolean>("playback-state-changed", (event) => {
-      setIsPlaying(event.payload);
-    }).then((unlisten) => unlisteners.push(unlisten));
+        const u2 = await listen<boolean>("playback-state-changed", (event) => {
+          if (!active) return;
+          setIsPlaying(event.payload);
+        });
+        unlisteners.push(u2);
 
-    listen<SequenceItem>("new-recorded-item", (event) => {
-      setItems((prev) => [...prev, event.payload]);
-    }).then((unlisten) => unlisteners.push(unlisten));
+        const u3 = await listen<SequenceItem>("new-recorded-item", (event) => {
+          if (!active) return;
+          setItems((prev) => [...prev, event.payload]);
+        });
+        unlisteners.push(u3);
 
-    listen("trigger-playback", () => {
-      // The backend fires this when the Start hotkey is pressed while Idle.
-      // We respond by sending the current sequence to the playback engine.
-      startPlaybackInternal();
-    }).then((unlisten) => unlisteners.push(unlisten));
+        const u4 = await listen("trigger-playback", () => {
+          if (!active) return;
+          startPlaybackInternal();
+        });
+        unlisteners.push(u4);
 
-    listen<[string, string]>("hotkey-configured", (event) => {
-      const [target, keyName] = event.payload;
-      setHotkeysState((prev) => {
-        const updated = { ...prev, [target]: keyName };
-        // Sync updated hotkeys to the hook layer
-        invoke("update_hook_hotkeys", {
-          recordKey: updated.recordToggle,
-          startKey: updated.startSequence,
-        }).catch(console.error);
-        return updated;
-      });
-      setIsListening(null);
-    }).then((unlisten) => unlisteners.push(unlisten));
+        const u5 = await listen<[string, string]>("hotkey-configured", (event) => {
+          if (!active) return;
+          const [target, keyName] = event.payload;
+          setHotkeysState((prev) => {
+            const updated = { ...prev, [target]: keyName };
+            invoke("update_hook_hotkeys", {
+              recordKey: updated.recordToggle,
+              startKey: updated.startSequence,
+            }).catch(console.error);
+            return updated;
+          });
+          setIsListening(null);
+        });
+        unlisteners.push(u5);
 
-    listen("hotkey-cancelled", () => {
-      setIsListening(null);
-    }).then((unlisten) => unlisteners.push(unlisten));
+        const u6 = await listen("hotkey-cancelled", () => {
+          if (!active) return;
+          setIsListening(null);
+        });
+        unlisteners.push(u6);
+
+        // If we unmounted before they finished resolving, clean them up
+        if (!active) {
+          unlisteners.forEach((fn) => fn());
+        }
+      } catch (err) {
+        console.error("Failed to setup Tauri listeners:", err);
+      }
+    };
+
+    setupListeners();
 
     return () => {
+      active = false;
       unlisteners.forEach((fn) => fn());
     };
   }, []);
@@ -211,7 +235,14 @@ export function useSequence(): UseSequenceReturn {
   const loadProfile = useCallback(() => {
     invoke<MacroProfile>("load_macro_profile")
       .then((profile) => {
-        setItems(profile.sequence.items);
+        // Filter out any corrupted empty recorded action sets
+        const cleanItems = (profile.sequence?.items || []).filter((item) => {
+          if (item.type === "recorded") {
+            return item.events && item.events.length > 0;
+          }
+          return true;
+        });
+        setItems(cleanItems);
         setRepeatState(profile.sequence.repeat);
         setHotkeysState(profile.hotkeys);
         invoke("update_hook_hotkeys", {
@@ -223,7 +254,14 @@ export function useSequence(): UseSequenceReturn {
   }, []);
 
   const importProfile = useCallback((profile: MacroProfile) => {
-    setItems(profile.sequence.items);
+    // Filter out any corrupted empty recorded action sets
+    const cleanItems = (profile.sequence?.items || []).filter((item) => {
+      if (item.type === "recorded") {
+        return item.events && item.events.length > 0;
+      }
+      return true;
+    });
+    setItems(cleanItems);
     setRepeatState(profile.sequence.repeat);
     setHotkeysState(profile.hotkeys);
     invoke("update_hook_hotkeys", {

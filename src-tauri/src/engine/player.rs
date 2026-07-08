@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     MOUSEEVENTF_ABSOLUTE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_LEFTDOWN,
     MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
     MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
@@ -104,20 +104,28 @@ fn execute_playback_event(event: &PlaybackEvent) {
                 send_mouse_input(MOUSEEVENTF_MOVE, x, y);
             }
         }
-        "mousedown" | "mouseup" => {
+        "mousedown" => {
             if let (Some(button), Some(x), Some(y)) = (event.button, event.x, event.y) {
-                let flags = match (event.kind.as_str(), button) {
-                    ("mousedown", MouseButton::Left) => MOUSEEVENTF_LEFTDOWN,
-                    ("mouseup", MouseButton::Left) => MOUSEEVENTF_LEFTUP,
-                    ("mousedown", MouseButton::Right) => MOUSEEVENTF_RIGHTDOWN,
-                    ("mouseup", MouseButton::Right) => MOUSEEVENTF_RIGHTUP,
-                    ("mousedown", MouseButton::Middle) => MOUSEEVENTF_MIDDLEDOWN,
-                    ("mouseup", MouseButton::Middle) => MOUSEEVENTF_MIDDLEUP,
-                    _ => MOUSE_EVENT_FLAGS(0),
+                // Move mouse to click position first
+                send_mouse_input(MOUSEEVENTF_MOVE, x, y);
+                // Brief pause before clicking (10ms)
+                thread::sleep(Duration::from_millis(10));
+                let flags = match button {
+                    MouseButton::Left => MOUSEEVENTF_LEFTDOWN,
+                    MouseButton::Right => MOUSEEVENTF_RIGHTDOWN,
+                    MouseButton::Middle => MOUSEEVENTF_MIDDLEDOWN,
                 };
-                if flags.0 != 0 {
-                    send_mouse_input(flags, x, y);
-                }
+                send_mouse_input(flags, x, y);
+            }
+        }
+        "mouseup" => {
+            if let (Some(button), Some(x), Some(y)) = (event.button, event.x, event.y) {
+                let flags = match button {
+                    MouseButton::Left => MOUSEEVENTF_LEFTUP,
+                    MouseButton::Right => MOUSEEVENTF_RIGHTUP,
+                    MouseButton::Middle => MOUSEEVENTF_MIDDLEUP,
+                };
+                send_mouse_input(flags, x, y);
             }
         }
         _ => {}
@@ -127,6 +135,14 @@ fn execute_playback_event(event: &PlaybackEvent) {
 /// Sleeps for a duration, checking the cancel flag every 10ms.
 /// Returns true if cancelled.
 fn sleep_check_cancel(total_ms: u32) -> bool {
+    // Check Escape key (0x1B) at the start
+    unsafe {
+        let esc_state = GetAsyncKeyState(0x1B);
+        if (esc_state as u16 & 0x8000) != 0 {
+            PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
+        }
+    }
+
     let step_ms = 10;
     let mut elapsed = 0;
     while elapsed < total_ms {
@@ -135,9 +151,67 @@ fn sleep_check_cancel(total_ms: u32) -> bool {
         }
         let sleep_time = std::cmp::min(step_ms, total_ms - elapsed);
         thread::sleep(Duration::from_millis(sleep_time as u64));
+
+        // Poll Escape key during sleep iterations
+        unsafe {
+            let esc_state = GetAsyncKeyState(0x1B);
+            if (esc_state as u16 & 0x8000) != 0 {
+                PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
+                return true;
+            }
+        }
+
         elapsed += sleep_time;
     }
     PLAYBACK_CANCEL.load(Ordering::SeqCst)
+}
+
+/// Safely releases any mouse buttons currently down without moving the cursor.
+fn send_mouse_release_for_safety() {
+    let inputs = [
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_LEFTUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_RIGHTUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+        INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dx: 0,
+                    dy: 0,
+                    mouseData: 0,
+                    dwFlags: MOUSEEVENTF_MIDDLEUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        },
+    ];
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
 }
 
 /// Starts execution of the macro sequence on a dedicated thread.
@@ -154,12 +228,40 @@ pub fn start_playback(
     let _ = thread::Builder::new()
         .name("player-thread".to_string())
         .spawn(move || {
+            // Collect all keyboard keys used in the sequence for release on cancel
+            let mut keys_to_release = std::collections::HashSet::new();
+            for item in &sequence.items {
+                match item {
+                    SequenceItem::Manual { key, .. } => {
+                        if let Some(vk) = string_to_vk(key) {
+                            keys_to_release.insert(vk);
+                        }
+                    }
+                    SequenceItem::Recorded { events, .. } => {
+                        for event in events {
+                            if event.kind == "keydown" {
+                                if let Some(ref key_name) = event.key {
+                                    if let Some(vk) = string_to_vk(key_name) {
+                                        keys_to_release.insert(vk);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Enable high-resolution multimedia timers
             // SAFETY: Call Windows multimedia API to ensure precise thread sleeping.
             unsafe {
                 let _ = windows::Win32::Media::timeBeginPeriod(1);
             }
             if sleep_check_cancel(1500) {
+                for &vk in &keys_to_release {
+                    send_keyboard_input(vk, false);
+                }
+                send_mouse_release_for_safety();
+
                 unsafe { let _ = windows::Win32::Media::timeEndPeriod(1); }
                 set_hook_state(0);
                 let _ = app_handle.emit("playback-state-changed", false);
@@ -170,6 +272,13 @@ pub fn start_playback(
             let mut aborted = false;
 
             loop {
+                unsafe {
+                    let esc_state = GetAsyncKeyState(0x1B);
+                    if (esc_state as u16 & 0x8000) != 0 {
+                        PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
+                    }
+                }
+
                 if PLAYBACK_CANCEL.load(Ordering::SeqCst) {
                     break;
                 }
@@ -226,6 +335,12 @@ pub fn start_playback(
                 // If infinite loop, loop_count is just incremented, it won't be checked
                 loop_count += 1;
             }
+
+            // Release all for safety
+            for &vk in &keys_to_release {
+                send_keyboard_input(vk, false);
+            }
+            send_mouse_release_for_safety();
 
             // Restore multimedia timers resolution
             // SAFETY: Restore multimedia timer settings.

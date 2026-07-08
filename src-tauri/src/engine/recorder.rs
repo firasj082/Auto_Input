@@ -6,7 +6,6 @@
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::engine::constants::{MOUSE_MERGE_DISTANCE_PX, MOUSE_MERGE_MIN_GAP_MS};
 use crate::engine::hook::RawInputEvent;
 use crate::engine::schema::{PlaybackEvent, SequenceItem};
 use crate::engine::keycodes::vk_to_string;
@@ -62,40 +61,12 @@ impl Recorder {
 
         self.start_time = None;
 
-        // Compaction pass: merge mouse movements under distance or time thresholds
-        let mut compacted_events: Vec<RecordedEvent> = Vec::with_capacity(self.events.len());
-        let mut last_mouse_pos: Option<(i32, i32, u32)> = None;
-
-        // We make a temporary buffer of events to scan
+        // No compaction needed — mouse movements are no longer recorded,
+        // only clicks and keyboard events.
         let raw_events = std::mem::take(&mut self.events);
 
-        for event in raw_events {
-            match event.event {
-                RawInputEvent::MouseMove { x, y } => {
-                    if let Some((lx, ly, lt)) = last_mouse_pos {
-                        let dx = (x - lx) as f32;
-                        let dy = (y - ly) as f32;
-                        let distance = (dx * dx + dy * dy).sqrt();
-                        let time_delta = event.offset_ms.saturating_sub(lt);
-
-                        // If mouse movement is below threshold and within the time limit, skip it
-                        if distance < MOUSE_MERGE_DISTANCE_PX && (time_delta as u64) < MOUSE_MERGE_MIN_GAP_MS {
-                            continue;
-                        }
-                    }
-                    last_mouse_pos = Some((x, y, event.offset_ms));
-                    compacted_events.push(event);
-                }
-                _ => {
-                    // Reset mouse merge state whenever keyboard or click action takes place
-                    last_mouse_pos = None;
-                    compacted_events.push(event);
-                }
-            }
-        }
-
         // Map internal events to the PlaybackEvent data shape
-        let playback_events: Vec<PlaybackEvent> = compacted_events
+        let playback_events: Vec<PlaybackEvent> = raw_events
             .into_iter()
             .map(|evt| {
                 let mut play_evt = PlaybackEvent {

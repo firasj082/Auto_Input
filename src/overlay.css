@@ -3,10 +3,16 @@ html, body {
   padding: 0 !important;
   background: transparent !important;
   background-color: transparent !important;
+  overflow: hidden !important;
+  width: 100vw;
+  height: 100vh;
 }
 #overlay-root {
   width: 100vw;
   height: 100vh;
   background: transparent !important;
   background-color: transparent !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
 }

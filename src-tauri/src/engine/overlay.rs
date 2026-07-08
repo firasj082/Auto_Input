@@ -33,8 +33,16 @@ pub fn show_overlays(app_handle: &AppHandle) {
             .always_on_top(true)
             .resizable(false)
             .focused(false)
+            .visible(false) // Start hidden to prevent white flash
+            .shadow(false)  // Disable the OS window drop shadow border
             .position(pos.x as f64 / scale, pos.y as f64 / scale)
-            .inner_size(size.width as f64 / scale, size.height as f64 / scale);
+            .inner_size(size.width as f64 / scale, size.height as f64 / scale)
+            .on_page_load(|window, payload| {
+                if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                    let _ = window.show();
+                    let _ = window.set_always_on_top(true);
+                }
+            });
 
         if let Ok(window) = builder.build() {
             let _ = window.set_ignore_cursor_events(true);
