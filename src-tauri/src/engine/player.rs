@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
+    SendInput, INPUT, INPUT_0, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     MOUSEEVENTF_ABSOLUTE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_LEFTDOWN,
     MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP,
     MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
@@ -18,8 +18,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
-    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, GetCursorPos,
 };
+use windows::Win32::Foundation::POINT;
 
 use crate::engine::schema::{MacroSequence, PlaybackEvent, SequenceItem};
 use crate::engine::hook::{MouseButton, set_hook_state};
@@ -209,14 +210,6 @@ fn play_recorded_events(events: &[PlaybackEvent], playback_scale: f64) -> bool {
 /// Sleeps for a duration, checking the cancel flag every 10ms.
 /// Returns true if cancelled.
 fn sleep_check_cancel(total_ms: u32) -> bool {
-    // Check Escape key (0x1B) at the start
-    unsafe {
-        let esc_state = GetAsyncKeyState(0x1B);
-        if (esc_state as u16 & 0x8000) != 0 {
-            PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
-        }
-    }
-
     let step_ms = 10;
     let mut elapsed = 0;
     while elapsed < total_ms {
@@ -225,25 +218,16 @@ fn sleep_check_cancel(total_ms: u32) -> bool {
         }
         let sleep_time = std::cmp::min(step_ms, total_ms - elapsed);
         thread::sleep(Duration::from_millis(sleep_time as u64));
-
-        // Poll Escape key during sleep iterations
-        unsafe {
-            let esc_state = GetAsyncKeyState(0x1B);
-            if (esc_state as u16 & 0x8000) != 0 {
-                PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
-                return true;
-            }
-        }
-
         elapsed += sleep_time;
     }
     PLAYBACK_CANCEL.load(Ordering::SeqCst)
 }
 
-/// Safely releases any mouse buttons currently down without moving the cursor.
-fn send_mouse_release_for_safety() {
-    let inputs = [
-        INPUT {
+/// Safely releases only the mouse buttons that were used during playback.
+fn send_mouse_release_for_safety(buttons: &std::collections::HashSet<MouseButton>) {
+    let mut inputs = Vec::new();
+    if buttons.contains(&MouseButton::Left) {
+        inputs.push(INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -255,8 +239,10 @@ fn send_mouse_release_for_safety() {
                     dwExtraInfo: 0,
                 },
             },
-        },
-        INPUT {
+        });
+    }
+    if buttons.contains(&MouseButton::Right) {
+        inputs.push(INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -268,8 +254,10 @@ fn send_mouse_release_for_safety() {
                     dwExtraInfo: 0,
                 },
             },
-        },
-        INPUT {
+        });
+    }
+    if buttons.contains(&MouseButton::Middle) {
+        inputs.push(INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
                 mi: MOUSEINPUT {
@@ -281,12 +269,15 @@ fn send_mouse_release_for_safety() {
                     dwExtraInfo: 0,
                 },
             },
-        },
-    ];
-    unsafe {
-        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        });
+    }
+    if !inputs.is_empty() {
+        unsafe {
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+        }
     }
 }
+
 
 /// Starts execution of the macro sequence on a dedicated thread.
 ///
@@ -310,13 +301,35 @@ pub fn start_playback(
     let spawn_result = thread::Builder::new()
         .name("player-thread".to_string())
         .spawn(move || {
-            // Collect all keyboard keys used in the sequence for release on cancel
+            // Collect all keyboard keys and mouse buttons used in the sequence for release on cancel/completion
             let mut keys_to_release = std::collections::HashSet::new();
+            let mut mouse_buttons_to_release = std::collections::HashSet::new();
+
             for item in &sequence.items {
+                let is_enabled = match item {
+                    SequenceItem::Manual { enabled, .. } => *enabled,
+                    SequenceItem::Recorded { enabled, .. } => *enabled,
+                };
+                if !is_enabled {
+                    continue;
+                }
+
                 match item {
                     SequenceItem::Manual { key, .. } => {
-                        if let Some(vk) = string_to_vk(key) {
-                            keys_to_release.insert(vk);
+                        let lower = key.to_lowercase();
+                        if lower == "mouseleft" {
+                            mouse_buttons_to_release.insert(MouseButton::Left);
+                        } else if lower == "mouseright" {
+                            mouse_buttons_to_release.insert(MouseButton::Right);
+                        } else if lower == "mousemiddle" {
+                            mouse_buttons_to_release.insert(MouseButton::Middle);
+                        } else {
+                            // Split composite key combo
+                            for part in key.split(" + ") {
+                                if let Some(vk) = string_to_vk(part) {
+                                    keys_to_release.insert(vk);
+                                }
+                            }
                         }
                     }
                     SequenceItem::Recorded { events, .. } => {
@@ -326,6 +339,10 @@ pub fn start_playback(
                                     if let Some(vk) = string_to_vk(key_name) {
                                         keys_to_release.insert(vk);
                                     }
+                                }
+                            } else if event.kind == "mousedown" {
+                                if let Some(button) = event.button {
+                                    mouse_buttons_to_release.insert(button);
                                 }
                             }
                         }
@@ -338,11 +355,12 @@ pub fn start_playback(
             unsafe {
                 let _ = windows::Win32::Media::timeBeginPeriod(1);
             }
+
             if sleep_check_cancel(1500) {
                 for &vk in &keys_to_release {
                     send_keyboard_input(vk, false);
                 }
-                send_mouse_release_for_safety();
+                send_mouse_release_for_safety(&mouse_buttons_to_release);
 
                 unsafe { let _ = windows::Win32::Media::timeEndPeriod(1); }
                 set_hook_state(0);
@@ -350,33 +368,12 @@ pub fn start_playback(
                 PLAYBACK_ACTIVE.store(false, Ordering::SeqCst);
                 return;
             }
+
             let repeat_config = sequence.repeat.clone();
-            eprintln!(
-                "[DEBUG] repeat.mode={} repeat.count={} items={}",
-                repeat_config.mode, repeat_config.count, sequence.items.len()
-            );
-            for (i, item) in sequence.items.iter().enumerate() {
-                match item {
-                    SequenceItem::Manual { key, .. } => eprintln!("  item[{i}] Manual key={key}"),
-                    SequenceItem::Recorded { events, .. } => {
-                        eprintln!("  item[{i}] Recorded events={}", events.len());
-                        for (j, ev) in events.iter().enumerate() {
-                            eprintln!("    event[{j}] t={} kind={} key={:?} button={:?}", ev.t, ev.kind, ev.key, ev.button);
-                        }
-                    }
-                }
-            }
             let mut loop_count = 0;
             let mut aborted = false;
 
             loop {
-                unsafe {
-                    let esc_state = GetAsyncKeyState(0x1B);
-                    if (esc_state as u16 & 0x8000) != 0 {
-                        PLAYBACK_CANCEL.store(true, Ordering::SeqCst);
-                    }
-                }
-
                 if PLAYBACK_CANCEL.load(Ordering::SeqCst) {
                     break;
                 }
@@ -391,31 +388,113 @@ pub fn start_playback(
                         break;
                     }
 
+                    let is_enabled = match item {
+                        SequenceItem::Manual { enabled, .. } => *enabled,
+                        SequenceItem::Recorded { enabled, .. } => *enabled,
+                    };
+                    if !is_enabled {
+                        continue;
+                    }
+
                     match item {
-                        SequenceItem::Manual { key, interval_ms, .. } => {
-                            if let Some(vk) = string_to_vk(key) {
-                                send_keyboard_input(vk, true);
-                                if sleep_check_cancel(*interval_ms) {
-                                    aborted = true;
-                                    break;
+                        SequenceItem::Manual { key, interval_ms, action_mode, .. } => {
+                            let is_mouse = key.to_lowercase().starts_with("mouse");
+                            if is_mouse {
+                                let mut pt = POINT::default();
+                                unsafe {
+                                    let _ = GetCursorPos(&mut pt);
                                 }
-                                send_keyboard_input(vk, false);
+                                
+                                let (down_flags, up_flags) = match key.to_lowercase().as_str() {
+                                    "mouseleft" => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+                                    "mouseright" => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
+                                    "mousemiddle" => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+                                    _ => (MOUSE_EVENT_FLAGS(0), MOUSE_EVENT_FLAGS(0)),
+                                };
+
+                                match action_mode.as_str() {
+                                    "hold" | "click" => {
+                                        send_mouse_input(down_flags, pt.x, pt.y);
+                                        if sleep_check_cancel(*interval_ms) {
+                                            aborted = true;
+                                            break;
+                                        }
+                                        send_mouse_input(up_flags, pt.x, pt.y);
+                                    }
+                                    "doubleclick" => {
+                                        send_mouse_input(down_flags, pt.x, pt.y);
+                                        if sleep_check_cancel(MIN_HOLD_MS) { aborted = true; break; }
+                                        send_mouse_input(up_flags, pt.x, pt.y);
+                                        if sleep_check_cancel(50) { aborted = true; break; }
+                                        send_mouse_input(down_flags, pt.x, pt.y);
+                                        if sleep_check_cancel(MIN_HOLD_MS) { aborted = true; break; }
+                                        send_mouse_input(up_flags, pt.x, pt.y);
+                                        let remaining = interval_ms.saturating_sub(MIN_HOLD_MS * 2 + 50);
+                                        if remaining > 0 && sleep_check_cancel(remaining) {
+                                            aborted = true;
+                                            break;
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            } else {
+                                // Split by " + " for composite keys
+                                let parts: Vec<&str> = key.split(" + ").collect();
+                                let vks: Vec<u32> = parts.iter().filter_map(|p| string_to_vk(p)).collect();
+                                if !vks.is_empty() {
+                                    match action_mode.as_str() {
+                                        "hold" | "click" => {
+                                            for &vk in &vks {
+                                                send_keyboard_input(vk, true);
+                                            }
+                                            if sleep_check_cancel(*interval_ms) {
+                                                aborted = true;
+                                                break;
+                                            }
+                                            for &vk in vks.iter().rev() {
+                                                send_keyboard_input(vk, false);
+                                            }
+                                        }
+                                        "doubleclick" => {
+                                            for &vk in &vks {
+                                                send_keyboard_input(vk, true);
+                                            }
+                                            if sleep_check_cancel(MIN_HOLD_MS) { aborted = true; break; }
+                                            for &vk in vks.iter().rev() {
+                                                send_keyboard_input(vk, false);
+                                            }
+                                            if sleep_check_cancel(50) { aborted = true; break; }
+                                            for &vk in &vks {
+                                                send_keyboard_input(vk, true);
+                                            }
+                                            if sleep_check_cancel(MIN_HOLD_MS) { aborted = true; break; }
+                                            for &vk in vks.iter().rev() {
+                                                send_keyboard_input(vk, false);
+                                            }
+                                            let remaining = interval_ms.saturating_sub(MIN_HOLD_MS * 2 + 50);
+                                            if remaining > 0 && sleep_check_cancel(remaining) {
+                                                aborted = true;
+                                                break;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
                         }
-                    SequenceItem::Recorded { playback_scale, events, .. } => {
-                        if play_recorded_events(events, *playback_scale) {
-                            aborted = true;
-                            break;
+                        SequenceItem::Recorded { playback_scale, events, .. } => {
+                            if play_recorded_events(events, *playback_scale) {
+                                aborted = true;
+                                break;
+                            }
                         }
                     }
-                    } // closes `match item { .. }`
-                } // closes `for item in &sequence.items { .. }`  <-- this one was missing
+                }
 
                 if aborted {
                     break;
                 }
 
-                // If infinite loop, loop_count is just incremented, it won't be checked
                 loop_count += 1;
             }
 
@@ -423,7 +502,7 @@ pub fn start_playback(
             for &vk in &keys_to_release {
                 send_keyboard_input(vk, false);
             }
-            send_mouse_release_for_safety();
+            send_mouse_release_for_safety(&mouse_buttons_to_release);
 
             // Restore multimedia timers resolution
             // SAFETY: Restore multimedia timer settings.

@@ -22,11 +22,15 @@ export interface PlaybackEvent {
   y?: number;
 }
 
+export type ActionMode = "click" | "hold" | "doubleclick";
+
 export interface ManualItem {
   type: "manual";
   id: string;
   key: string;
   intervalMs: number;
+  actionMode: ActionMode;
+  enabled?: boolean;
 }
 
 export interface RecordedItem {
@@ -36,6 +40,7 @@ export interface RecordedItem {
   originalDurationMs: number;
   playbackScale: number;
   events: PlaybackEvent[];
+  enabled?: boolean;
 }
 
 export type SequenceItem = ManualItem | RecordedItem;
@@ -60,4 +65,52 @@ export interface MacroProfile {
   appId: string;
   hotkeys: HotkeysConfig;
   sequence: MacroSequence;
+}
+
+export interface Loadout {
+  id: string;
+  name: string;
+  description: string;
+  sequence: MacroSequence;
+  version: number;
+  lastUsedAt: number;
+  lastUpdatedAt: number;
+}
+
+export interface LoadoutMetadata {
+  id: string;
+  name: string;
+  description: string;
+  repeatMode: "count" | "infinite";
+  repeatCount: number;
+  totalItems: number;
+  totalDurationMs: number;
+  lastUsedAt: number;
+  lastUpdatedAt: number;
+}
+
+export interface ThemeColors {
+  bgApp: string;
+  bgPanel: string;
+  bgElevated: string;
+  borderDefault: string;
+  textPrimary: string;
+  textSecondary: string;
+  accent: string;
+  accentHover: string;
+  statusRecording: string;
+  statusPlaying: string;
+  statusWarning: string;
+}
+
+export interface Theme {
+  id: string;
+  name: string;
+  isBuiltIn: boolean;
+  colors: ThemeColors;
+}
+
+export interface AppSettings {
+  activeThemeId: string;
+  recordDragMotion: boolean;
 }

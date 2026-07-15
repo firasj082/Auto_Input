@@ -4,7 +4,26 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>Auto Input</title>
+    <script>
+      (function() {
+        const cachedColors = localStorage.getItem("active-theme-colors");
+        if (cachedColors) {
+          try {
+            const colors = JSON.parse(cachedColors);
+            const root = document.documentElement;
+            Object.entries(colors).forEach(function(entry) {
+              var key = entry[0];
+              var val = entry[1];
+              var cssKey = "--" + key.replace(/([A-Z])/g, "-$1").toLowerCase();
+              root.style.setProperty(cssKey, val);
+            });
+          } catch (e) {
+            console.error("Failed to parse cached theme colors:", e);
+          }
+        }
+      })();
+    </script>
   </head>
 
   <body>

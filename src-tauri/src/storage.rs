@@ -72,3 +72,50 @@ pub fn save_profile(app_handle: &AppHandle, profile: &MacroProfile) -> Result<()
 
     Ok(())
 }
+
+/// Resolves the absolute path to the local Loadouts folder in AppData, creating it if necessary.
+pub fn get_loadouts_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data directory: {}", e))?;
+    
+    path.push("Loadouts");
+    
+    // Ensure Loadouts directory exists
+    if !path.exists() {
+        create_dir_all(&path)
+            .map_err(|e| format!("failed to create Loadouts directory: {}", e))?;
+    }
+    
+    Ok(path)
+}
+
+/// Resolves the absolute path to the local Themes folder in AppData, creating it if necessary.
+pub fn get_themes_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data directory: {}", e))?;
+    
+    path.push("Themes");
+    
+    // Ensure Themes directory exists
+    if !path.exists() {
+        create_dir_all(&path)
+            .map_err(|e| format!("failed to create Themes directory: {}", e))?;
+    }
+    
+    Ok(path)
+}
+
+/// Resolves the absolute path to the theme_settings.json file in AppData.
+pub fn get_theme_settings_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
+    let mut path = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("failed to resolve app data directory: {}", e))?;
+    
+    path.push("theme_settings.json");
+    Ok(path)
+}

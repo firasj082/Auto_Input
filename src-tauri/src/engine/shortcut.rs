@@ -19,6 +19,8 @@ static CURRENT_SHORTCUTS: OnceLock<Mutex<CurrentShortcuts>> = OnceLock::new();
 struct CurrentShortcuts {
     record: Option<Shortcut>,
     start: Option<Shortcut>,
+    record_key: String,
+    start_key: String,
     record_held: bool,
     start_held: bool,
     last_trigger: Instant,
@@ -150,6 +152,8 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
         Mutex::new(CurrentShortcuts {
             record: None,
             start: None,
+            record_key: "F9".to_string(),
+            start_key: "F10".to_string(),
             record_held: false,
             start_held: false,
             last_trigger: Instant::now() - Duration::from_secs(5),
@@ -255,6 +259,10 @@ pub fn register_hotkeys(app_handle: &AppHandle, record_key: &str, start_key: &st
         let _ = gs.unregister(old);
     }
 
+    // Save key strings
+    current.record_key = record_key.to_string();
+    current.start_key = start_key.to_string();
+
     // Register new record shortcut
     let record_code = key_name_to_code(record_key)
         .ok_or_else(|| format!("Unknown key for record hotkey: {}", record_key))?;
@@ -273,4 +281,36 @@ pub fn register_hotkeys(app_handle: &AppHandle, record_key: &str, start_key: &st
 
     eprintln!("[SHORTCUT] Registered: record={}, start={}", record_key, start_key);
     Ok(())
+}
+
+/// Unregisters all active global shortcuts.
+pub fn unregister_all_hotkeys(app_handle: &AppHandle) -> Result<(), String> {
+    let gs = app_handle.global_shortcut();
+    let guard = CURRENT_SHORTCUTS
+        .get()
+        .ok_or("Shortcuts not initialized")?;
+    let mut current = guard.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+    if let Some(old) = current.record.take() {
+        let _ = gs.unregister(old);
+    }
+    if let Some(old) = current.start.take() {
+        let _ = gs.unregister(old);
+    }
+
+    eprintln!("[SHORTCUT] Unregistered all active hotkeys");
+    Ok(())
+}
+
+/// Re-registers global shortcuts using stored key strings.
+pub fn reregister_active_hotkeys(app_handle: &AppHandle) -> Result<(), String> {
+    let (record_key, start_key) = {
+        let guard = CURRENT_SHORTCUTS
+            .get()
+            .ok_or("Shortcuts not initialized")?;
+        let current = guard.lock().map_err(|e| format!("Lock error: {}", e))?;
+        (current.record_key.clone(), current.start_key.clone())
+    };
+
+    register_hotkeys(app_handle, &record_key, &start_key)
 }

@@ -49,14 +49,14 @@ export const LoopControl: React.FC<Props> = ({
         display: "flex",
         alignItems: "center",
         gap: "24px",
-        background: "rgba(255,255,255,0.01)",
+        background: "var(--bg-elevated)",
         padding: "12px 20px",
-        borderRadius: "var(--radius-md)",
-        border: "1px solid var(--border-color)",
+        borderRadius: "var(--radius-default)",
+        border: "1px solid var(--border-default)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-        <span className="input-label" style={{ fontSize: "13px" }}>
+        <span className="input-label" style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
           Repeat Count
         </span>
         {isInfinite ? (
@@ -67,11 +67,11 @@ export const LoopControl: React.FC<Props> = ({
               textAlign: "center",
               fontSize: "18px",
               fontWeight: "bold",
-              color: "var(--accent-purple)",
+              color: "var(--accent)",
               opacity: 0.5,
-              background: "rgba(0, 0, 0, 0.25)",
+              background: "var(--bg-elevated)",
               padding: "6px 10px",
-              borderRadius: "var(--radius-md)",
+              borderRadius: "var(--radius-sm)",
             }}
           >
             ∞
@@ -105,7 +105,7 @@ export const LoopControl: React.FC<Props> = ({
           style={{
             width: "16px",
             height: "16px",
-            accentColor: "var(--accent-purple)",
+            accentColor: "var(--accent)",
             cursor: "inherit",
           }}
         />

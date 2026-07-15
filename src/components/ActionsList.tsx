@@ -32,33 +32,34 @@ export const ActionsList: React.FC<Props> = ({
   const handleDragOver = (e: React.DragEvent) => {
     if (disabled) return;
     e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
   };
 
   const handleDrop = (e: React.DragEvent, targetIndex: number) => {
-    if (disabled || draggedIndex === null) return;
     e.preventDefault();
+    if (disabled || draggedIndex === null) return;
+    
+    // Safety check validating indices are still within bounds
+    if (draggedIndex < 0 || draggedIndex >= items.length || targetIndex < 0 || targetIndex >= items.length) {
+      setDraggedIndex(null);
+      return;
+    }
+
     if (draggedIndex !== targetIndex) {
       onReorder(draggedIndex, targetIndex);
     }
     setDraggedIndex(null);
   };
 
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+  };
+
   if (items.length === 0) {
     return (
-      <div
-        className="actions-list-container"
-        style={{
-          justifyContent: "center",
-          alignItems: "center",
-          border: "2px dashed var(--border-color)",
-          borderRadius: "var(--radius-lg)",
-          color: "var(--text-muted)",
-          fontSize: "14px",
-          minHeight: "220px",
-        }}
-      >
+      <div className="actions-list-empty">
         <span>No macro actions added yet.</span>
-        <span style={{ fontSize: "11px", marginTop: "4px" }}>
+        <span style={{ fontSize: "11.5px", color: "var(--text-secondary)" }}>
           Record action or add manual clicks to start.
         </span>
       </div>
@@ -76,8 +77,10 @@ export const ActionsList: React.FC<Props> = ({
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
+          onDragEnd={handleDragEnd}
           index={index}
           disabled={disabled}
+          isBeingDragged={draggedIndex === index}
         />
       ))}
     </div>

@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef } from "react";
+import { useKeyCapture } from "../hooks/useKeyCapture";
 
 interface Props {
   label: string;
@@ -26,31 +27,14 @@ export const HotkeyField: React.FC<Props> = ({
 }) => {
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // When we enter listening mode, attach a global keydown handler
-  // so we capture the next key press reliably via the browser API.
-  useEffect(() => {
-    if (!isListening) return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      // Escape cancels listening
-      if (e.key === "Escape") {
-        onCancelListening();
-        return;
-      }
-
-      // Convert browser key name to our standard format
-      const keyName = browserKeyToDisplayName(e);
-      if (keyName && onKeyCapture) {
-        onKeyCapture(keyName);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isListening, onCancelListening, onKeyCapture]);
+  // Consume shared key capture hook
+  useKeyCapture((keyName) => {
+    if (keyName === "Escape") {
+      onCancelListening();
+    } else if (onKeyCapture) {
+      onKeyCapture(keyName);
+    }
+  }, isListening);
 
   const handleClick = () => {
     if (isListening) {
@@ -61,20 +45,32 @@ export const HotkeyField: React.FC<Props> = ({
   };
 
   return (
-    <div className="input-container" style={{ minWidth: "160px" }}>
-      <label className="input-label">{label}</label>
+    <div className="hotkey-inline-container">
+      <span className="input-label">{label}</span>
       <button
         ref={buttonRef}
         type="button"
-        className={`btn btn-secondary ${isListening ? "listening-pulse" : ""}`}
+        className={`hotkey-value-btn ${isListening ? "listening" : ""}`}
         onClick={handleClick}
-        style={{
-          borderStyle: isListening ? "dashed" : "solid",
-          fontWeight: "600",
-          letterSpacing: "0.05em",
-        }}
       >
-        {isListening ? "Press any key..." : currentKey}
+        <span>{isListening ? "Press any key..." : currentKey}</span>
+        {!isListening && (
+          <span className="edit-icon-inline">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4z" />
+            </svg>
+          </span>
+        )}
       </button>
     </div>
   );
@@ -84,7 +80,7 @@ export const HotkeyField: React.FC<Props> = ({
  * Converts a browser KeyboardEvent to a human-readable key name
  * matching the format expected by our keycodes.rs backend.
  */
-function browserKeyToDisplayName(e: KeyboardEvent): string | null {
+export function browserKeyToDisplayName(e: KeyboardEvent): string | null {
   const key = e.key;
   const code = e.code;
 
@@ -115,6 +111,10 @@ function browserKeyToDisplayName(e: KeyboardEvent): string | null {
     Delete: "Delete",
     NumLock: "NumLock",
     ScrollLock: "ScrollLock",
+    Meta: "LWin",
+    ContextMenu: "Apps",
+    PrintScreen: "PrintScreen",
+    Sleep: "Sleep",
   };
 
   if (namedKeys[key]) return namedKeys[key];
@@ -145,6 +145,8 @@ function browserKeyToDisplayName(e: KeyboardEvent): string | null {
   if (code === "ControlRight") return "RControl";
   if (code === "AltLeft") return "LAlt";
   if (code === "AltRight") return "RAlt";
+  if (code === "MetaLeft") return "LWin";
+  if (code === "MetaRight") return "RWin";
 
   // Fallback: use the key as-is if it seems valid
   if (key.length <= 12 && key !== "Unidentified" && key !== "Dead") {

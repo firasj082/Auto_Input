@@ -11,6 +11,9 @@
 /// This function is pure and thread-safe. It does not block.
 pub fn vk_to_string(vk: u32) -> String {
     match vk {
+        0x01 => "MouseLeft".to_string(),
+        0x02 => "MouseRight".to_string(),
+        0x04 => "MouseMiddle".to_string(),
         0x08 => "Backspace".to_string(),
         0x09 => "Tab".to_string(),
         0x0C => "Clear".to_string(),
@@ -63,6 +66,11 @@ pub fn vk_to_string(vk: u32) -> String {
         0xA3 => "RControl".to_string(),
         0xA4 => "LAlt".to_string(),
         0xA5 => "RAlt".to_string(),
+        0x5B => "LWin".to_string(),
+        0x5C => "RWin".to_string(),
+        0x5D => "Apps".to_string(),
+        0x2C => "PrintScreen".to_string(),
+        0x5F => "Sleep".to_string(),
         _ => format!("VK_{}", vk),
     }
 }
@@ -77,6 +85,9 @@ pub fn vk_to_string(vk: u32) -> String {
 pub fn string_to_vk(name: &str) -> Option<u32> {
     let lower = name.to_lowercase();
     match lower.as_str() {
+        "mouseleft" => Some(0x01),
+        "mouseright" => Some(0x02),
+        "mousemiddle" => Some(0x04),
         "backspace" => Some(0x08),
         "tab" => Some(0x09),
         "clear" => Some(0x0C),
@@ -122,6 +133,11 @@ pub fn string_to_vk(name: &str) -> Option<u32> {
         "rcontrol" => Some(0xA3),
         "lalt" => Some(0xA4),
         "ralt" => Some(0xA5),
+        "lwin" => Some(0x5B),
+        "rwin" => Some(0x5C),
+        "apps" => Some(0x5D),
+        "printscreen" => Some(0x2C),
+        "sleep" => Some(0x5F),
         _ => {
             // Check if single character digit/letter
             if name.len() == 1 {
@@ -150,3 +166,19 @@ pub fn string_to_vk(name: &str) -> Option<u32> {
         }
     }
 }
+
+pub fn vk_to_string_with_case(vk: u32, is_uppercase: bool) -> String {
+    let s = vk_to_string(vk);
+    if s.len() == 1 {
+        let c = s.chars().next().unwrap();
+        if c.is_ascii_alphabetic() {
+            if is_uppercase {
+                return c.to_ascii_uppercase().to_string();
+            } else {
+                return c.to_ascii_lowercase().to_string();
+            }
+        }
+    }
+    s
+}
+

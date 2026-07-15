@@ -1,0 +1,31 @@
+:root {
+  /* Backgrounds */
+  --bg-app: #0d0f14;
+  --bg-panel: #151821;
+  --bg-elevated: #1c202b;
+
+  /* Borders */
+  --border-default: #242833;
+
+  /* Text */
+  --text-primary: #e8eaed;
+  --text-secondary: #8b909c;
+
+  /* Accent — idle/primary actions ONLY */
+  --accent: #5b8cff;
+  --accent-hover: #7099ff;
+  --accent-text: #ffffff;
+
+  /* Semantic status — RESERVED */
+  --status-recording: #ff5c5c;
+  --status-playing: #4ade80;
+  --status-warning: #f59e0b;   /* destructive actions (delete), warning modals */
+
+  /* Radii */
+  --radius-default: 8px;
+  --radius-sm: 6px;
+
+  /* Transitions (carried over) */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}

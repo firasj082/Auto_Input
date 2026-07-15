@@ -151,6 +151,9 @@ export function useSequence(): UseSequenceReturn {
 
   const reorderItems = useCallback((fromIndex: number, toIndex: number) => {
     setItems((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) {
+        return prev;
+      }
       const copy = [...prev];
       const [moved] = copy.splice(fromIndex, 1);
       copy.splice(toIndex, 0, moved);

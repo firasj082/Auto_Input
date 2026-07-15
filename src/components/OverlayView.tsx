@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 
 /**
  * Read-only visual indicator shown during recording. Contains zero
@@ -8,12 +9,28 @@ import { useEffect, useState } from "react";
  */
 export function OverlayView() {
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [startedAt, setStartedAt] = useState(Date.now());
 
+  // Listen for the backend's reset-timer event (emitted each time
+  // an existing overlay window is re-shown for a new recording session).
   useEffect(() => {
-    const startedAt = Date.now();
-    const id = setInterval(() => setElapsedMs(Date.now() - startedAt), 1000);
-    return () => clearInterval(id);
+    let unlisten: (() => void) | null = null;
+    listen("reset-timer", () => {
+      const now = Date.now();
+      setStartedAt(now);
+      setElapsedMs(0);
+    }).then((fn) => { unlisten = fn; });
+
+    return () => { if (unlisten) unlisten(); };
   }, []);
+
+  // Tick interval that computes elapsed from startedAt
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsedMs(Date.now() - startedAt);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [startedAt]);
 
   const totalSeconds = Math.floor(elapsedMs / 1000);
   const mm = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
