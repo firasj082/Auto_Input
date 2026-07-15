@@ -268,7 +268,6 @@ pub fn start_consumer(rx: crossbeam_channel::Receiver<HookEvent>, app_handle: Ap
                             // by the global shortcut plugin (shortcut.rs), not here.
                             RawInputEvent::RecordTogglePressed | RawInputEvent::StartSequencePressed => {}
                             RawInputEvent::Keyboard { vk, down } => {
-                                eprintln!("[CONSUMER] Keyboard: vk = 0x{:X}, down = {}, state = {}", vk, down, state);
                                 if state == 1 || state == 2 {
                                     if down {
                                         // Intercept Escape to cancel configuring hotkeys
@@ -669,6 +668,7 @@ pub fn get_theme_settings(app_handle: AppHandle) -> Result<AppSettings, String> 
         return Ok(AppSettings {
             active_theme_id: "default".to_string(),
             record_drag_motion: true,
+            when_closed: "minimize".to_string(),
         });
     }
 

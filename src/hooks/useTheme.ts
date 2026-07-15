@@ -63,6 +63,7 @@ export function useTheme() {
   const [themes, setThemes] = useState<Theme[]>([]);
   const [activeThemeId, setActiveThemeId] = useState<string>("default");
   const [recordDragMotion, setRecordDragMotionState] = useState<boolean>(true);
+  const [whenClosed, setWhenClosedState] = useState<string>("minimize");
 
   const loadThemeSettings = async () => {
     try {
@@ -72,6 +73,7 @@ export function useTheme() {
       const settings = await invoke<AppSettings>("get_theme_settings");
       setActiveThemeId(settings.activeThemeId);
       setRecordDragMotionState(settings.recordDragMotion);
+      setWhenClosedState(settings.whenClosed || "minimize");
 
       // Find active theme colors
       const active = allThemes.find((t) => t.id === settings.activeThemeId) || allThemes[0];
@@ -103,7 +105,7 @@ export function useTheme() {
 
       // Write settings to backend
       await invoke("save_theme_settings", {
-        settings: { activeThemeId: id, recordDragMotion },
+        settings: { activeThemeId: id, recordDragMotion, whenClosed },
       });
 
       // Update cache
@@ -121,10 +123,21 @@ export function useTheme() {
     try {
       setRecordDragMotionState(enabled);
       await invoke("save_theme_settings", {
-        settings: { activeThemeId, recordDragMotion: enabled },
+        settings: { activeThemeId, recordDragMotion: enabled, whenClosed },
       });
     } catch (err) {
       console.error("Failed to save record settings:", err);
+    }
+  };
+
+  const setWhenClosed = async (val: string) => {
+    try {
+      setWhenClosedState(val);
+      await invoke("save_theme_settings", {
+        settings: { activeThemeId, recordDragMotion, whenClosed: val },
+      });
+    } catch (err) {
+      console.error("Failed to save exit settings:", err);
     }
   };
 
@@ -180,7 +193,7 @@ export function useTheme() {
           localStorage.setItem("active-theme-id", "default");
         }
         await invoke("save_theme_settings", {
-          settings: { activeThemeId: "default", recordDragMotion },
+          settings: { activeThemeId: "default", recordDragMotion, whenClosed },
         });
       }
 
@@ -196,8 +209,10 @@ export function useTheme() {
     themes,
     activeThemeId,
     recordDragMotion,
+    whenClosed,
     selectTheme,
     setRecordDragMotion,
+    setWhenClosed,
     saveCustomTheme,
     deleteTheme,
   };

@@ -44,7 +44,7 @@ export default function App() {
     importProfile,
   } = useSequence();
 
-  const { themes, activeThemeId, recordDragMotion, selectTheme, setRecordDragMotion, saveCustomTheme, deleteTheme } = useTheme();
+  const { themes, activeThemeId, recordDragMotion, whenClosed, selectTheme, setRecordDragMotion, setWhenClosed, saveCustomTheme, deleteTheme } = useTheme();
 
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isSaveLoadoutOpen, setIsSaveLoadoutOpen] = useState(false);
@@ -189,70 +189,70 @@ export default function App() {
     <div className="app-shell">
       <SideRail activeTab={activeTab} onTabChange={setActiveTab} />
       <div className="app-container">
-        {/* Header section with branding & hotkeys */}
-        <header
-          className="panel-glass"
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: "20px",
-            flexWrap: "wrap",
-          }}
-        >
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-            <h1
-              style={{
-                fontSize: "24px",
-                fontWeight: "800",
-                color: "var(--text-primary)",
-                letterSpacing: "-0.02em",
-                display: "flex",
-                alignItems: "center",
-                gap: "6px",
-              }}
-            >
-              <span style={{ color: "var(--accent)" }}>●</span>
-              Auto Input
-            </h1>
-            <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: "500" }}>
-              Windows Auto-Clicker & Macro Engine
-            </span>
-          </div>
-
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-          <HotkeyField
-            label="Record Toggle"
-            currentKey={hotkeys.recordToggle}
-            isListening={isListening === "recordToggle"}
-            onStartListening={() => handleStartListening("recordToggle")}
-            onCancelListening={handleCancelListening}
-            onKeyCapture={(keyName) => handleKeyCapture("recordToggle", keyName)}
-          />
-          <HotkeyField
-            label="Start Sequence"
-            currentKey={hotkeys.startSequence}
-            isListening={isListening === "startSequence"}
-            onStartListening={() => handleStartListening("startSequence")}
-            onCancelListening={handleCancelListening}
-            onKeyCapture={(keyName) => handleKeyCapture("startSequence", keyName)}
-          />
-
-          <PrimaryActionButton
-            isRecording={isRecording}
-            isPlaying={isPlaying}
-            isPlayDisabled={isPlayDisabled}
-            isRecordDisabled={isRecordDisabled}
-            onRecordToggle={isRecording ? stopRecording : startRecording}
-            onPlayToggle={isPlaying ? stopPlayback : startPlayback}
-            repeatMode={repeat.mode}
-            repeatCount={repeat.count}
-          />
-        </div>
-      </header>
 
       {activeTab === "timeline" && (
         <>
+          {/* Header section with branding & hotkeys */}
+          <header
+            className="panel-glass"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "20px",
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <h1
+                style={{
+                  fontSize: "24px",
+                  fontWeight: "800",
+                  color: "var(--text-primary)",
+                  letterSpacing: "-0.02em",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span style={{ color: "var(--accent)" }}>●</span>
+                Auto Input
+              </h1>
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: "500" }}>
+                Windows Auto-Clicker & Macro Engine
+              </span>
+            </div>
+
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+              <HotkeyField
+                label="Record Toggle"
+                currentKey={hotkeys.recordToggle}
+                isListening={isListening === "recordToggle"}
+                onStartListening={() => handleStartListening("recordToggle")}
+                onCancelListening={handleCancelListening}
+                onKeyCapture={(keyName) => handleKeyCapture("recordToggle", keyName)}
+              />
+              <HotkeyField
+                label="Start Sequence"
+                currentKey={hotkeys.startSequence}
+                isListening={isListening === "startSequence"}
+                onStartListening={() => handleStartListening("startSequence")}
+                onCancelListening={handleCancelListening}
+                onKeyCapture={(keyName) => handleKeyCapture("startSequence", keyName)}
+              />
+
+              <PrimaryActionButton
+                isRecording={isRecording}
+                isPlaying={isPlaying}
+                isPlayDisabled={isPlayDisabled}
+                isRecordDisabled={isRecordDisabled}
+                onRecordToggle={isRecording ? stopRecording : startRecording}
+                onPlayToggle={isPlaying ? stopPlayback : startPlayback}
+                repeatMode={repeat.mode}
+                repeatCount={repeat.count}
+              />
+            </div>
+          </header>
           {/* Timeline items list */}
           <main className="panel-glass" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "16px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -332,10 +332,12 @@ export default function App() {
           themes={themes}
           activeThemeId={activeThemeId}
           recordDragMotion={recordDragMotion}
+          whenClosed={whenClosed}
           onSelectTheme={selectTheme}
           onSaveCustomTheme={saveCustomTheme}
           onDeleteTheme={deleteTheme}
           onSetRecordDragMotion={setRecordDragMotion}
+          onSetWhenClosed={setWhenClosed}
         />
       )}
 

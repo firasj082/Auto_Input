@@ -15,6 +15,13 @@ use tauri_plugin_autostart::MacosLauncher;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -49,9 +56,19 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Intercept close button and hide window to system tray instead
-                api.prevent_close();
-                let _ = window.hide();
+                // Retrieve settings to check close behavior
+                let when_closed = if let Ok(settings) = crate::commands::get_theme_settings(window.app_handle().clone()) {
+                    settings.when_closed
+                } else {
+                    "minimize".to_string()
+                };
+
+                if when_closed == "close" {
+                    window.app_handle().exit(0);
+                } else {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .setup(|app| {

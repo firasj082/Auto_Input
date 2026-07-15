@@ -248,4 +248,10 @@ pub struct AppSettings {
     pub active_theme_id: String,
     #[serde(rename = "recordDragMotion")]
     pub record_drag_motion: bool,
+    #[serde(rename = "whenClosed", default = "default_when_closed")]
+    pub when_closed: String,
+}
+
+fn default_when_closed() -> String {
+    "minimize".to_string()
 }

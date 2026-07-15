@@ -113,4 +113,5 @@ export interface Theme {
 export interface AppSettings {
   activeThemeId: string;
   recordDragMotion: boolean;
+  whenClosed: string;
 }

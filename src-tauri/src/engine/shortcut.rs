@@ -215,7 +215,6 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
                 drop(guard); // Release lock before doing work
 
                 if is_record {
-                    eprintln!("[SHORTCUT] Record hotkey triggered. State={}", state);
                     if state == 0 {
                         // Idle → start recording
                         let _ = crate::commands::start_recording(app_handle.clone());
@@ -224,7 +223,6 @@ pub fn init_global_shortcuts(app: &tauri::App) -> Result<(), Box<dyn std::error:
                         let _ = crate::commands::stop_recording(app_handle.clone());
                     }
                 } else if is_start {
-                    eprintln!("[SHORTCUT] Start hotkey triggered. State={}", state);
                     if state == 0 {
                         // Idle → trigger playback
                         let _ = app_handle.emit("trigger-playback", ());
@@ -279,7 +277,6 @@ pub fn register_hotkeys(app_handle: &AppHandle, record_key: &str, start_key: &st
         .map_err(|e| format!("Failed to register start hotkey '{}': {}", start_key, e))?;
     current.start = Some(start_shortcut);
 
-    eprintln!("[SHORTCUT] Registered: record={}, start={}", record_key, start_key);
     Ok(())
 }
 
@@ -298,7 +295,6 @@ pub fn unregister_all_hotkeys(app_handle: &AppHandle) -> Result<(), String> {
         let _ = gs.unregister(old);
     }
 
-    eprintln!("[SHORTCUT] Unregistered all active hotkeys");
     Ok(())
 }
 

@@ -6,10 +6,12 @@ interface Props {
   themes: Theme[];
   activeThemeId: string;
   recordDragMotion: boolean;
+  whenClosed: string;
   onSelectTheme: (id: string) => void;
   onSaveCustomTheme: (name: string, colors: Omit<ThemeColors, "accentHover" | "statusRecording" | "statusPlaying" | "statusWarning">) => Promise<void>;
   onDeleteTheme: (id: string) => void;
   onSetRecordDragMotion: (enabled: boolean) => void;
+  onSetWhenClosed: (val: string) => void;
 }
 
 interface CreatorState {
@@ -43,10 +45,12 @@ export const SettingsTab: React.FC<Props> = ({
   themes,
   activeThemeId,
   recordDragMotion,
+  whenClosed,
   onSelectTheme,
   onSaveCustomTheme,
   onDeleteTheme,
   onSetRecordDragMotion,
+  onSetWhenClosed,
 }) => {
   const [creator, setCreator] = useState<CreatorState>(DEFAULT_CREATOR);
   const [saving, setSaving] = useState(false);
@@ -125,6 +129,7 @@ export const SettingsTab: React.FC<Props> = ({
             ...fullColors,
             accentText: getContrastColor(fullColors.accent)
           }));
+          localStorage.setItem("active-theme-id", creator.editingTheme.id);
         }
 
         // Force theme list refresh by re-selecting current theme
@@ -155,6 +160,52 @@ export const SettingsTab: React.FC<Props> = ({
           <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
             Configure visual themes and display settings
           </span>
+        </div>
+
+        <hr style={{ border: "none", borderTop: "1px solid var(--border-default)", margin: 0 }} />
+
+        {/* Exit Section */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <h3 style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-secondary)" }}>Exit</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "13px", fontWeight: "500", color: "var(--text-primary)" }}>When closed</span>
+            <div style={{ display: "flex", background: "var(--bg-elevated)", borderRadius: "var(--radius-sm)", padding: "2px" }}>
+              <button
+                type="button"
+                style={{
+                  padding: "6px 12px",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  background: whenClosed === "close" ? "var(--bg-panel)" : "transparent",
+                  color: whenClosed === "close" ? "var(--text-primary)" : "var(--text-secondary)",
+                  fontWeight: whenClosed === "close" ? "600" : "500",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all var(--transition-fast)",
+                }}
+                onClick={() => onSetWhenClosed("close")}
+              >
+                Close the app
+              </button>
+              <button
+                type="button"
+                style={{
+                  padding: "6px 12px",
+                  border: "none",
+                  borderRadius: "var(--radius-sm)",
+                  background: whenClosed === "minimize" ? "var(--bg-panel)" : "transparent",
+                  color: whenClosed === "minimize" ? "var(--text-primary)" : "var(--text-secondary)",
+                  fontWeight: whenClosed === "minimize" ? "600" : "500",
+                  fontSize: "12px",
+                  cursor: "pointer",
+                  transition: "all var(--transition-fast)",
+                }}
+                onClick={() => onSetWhenClosed("minimize")}
+              >
+                Minimize to tray
+              </button>
+            </div>
+          </div>
         </div>
 
         <hr style={{ border: "none", borderTop: "1px solid var(--border-default)", margin: 0 }} />
