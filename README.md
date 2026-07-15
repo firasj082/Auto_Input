@@ -78,7 +78,10 @@ The built installer will be located in `src-tauri/target/release/bundle/`.
 
 ## Contributing
 
-Contributions, issues, and feature requests are welcome. Feel free to check the [issues page](https://github.com/<your-username>/auto-input/issues).
+Contributions, issues, and feature requests are welcome.
+
+## AI Usage Disclosure
+This project was developed with AI assistance
 
 1. Fork the repo
 2. Create your feature branch (`git checkout -b feature/my-feature`)
