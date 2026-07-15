@@ -8,13 +8,14 @@ use uuid::Uuid;
 
 use crate::engine::hook::RawInputEvent;
 use crate::engine::schema::{PlaybackEvent, SequenceItem};
-use crate::engine::keycodes::vk_to_string;
+use crate::engine::keycodes::vk_to_string_with_case;
 
 /// Internal representation of an event captured during recording.
 #[derive(Debug, Clone)]
 struct RecordedEvent {
     offset_ms: u32,
     event: RawInputEvent,
+    is_uppercase: bool,
 }
 
 /// Accumulates system inputs and builds an ActionSet.
@@ -59,6 +60,7 @@ impl Recorder {
     /// Safely handles inputs sequentially.
     pub fn record_event(&mut self, raw_event: RawInputEvent, event_time: Instant) {
         if let Some(start) = self.start_time {
+            let mut is_uppercase = false;
             if let RawInputEvent::Keyboard { vk, down } = raw_event {
                 // Never record the app's own control hotkeys — pressing them
                 // is a command to the app, not part of the macro being recorded.
@@ -75,6 +77,11 @@ impl Recorder {
                 } else {
                     self.pressed_keys.remove(&vk);
                 }
+
+                // Determine case using Shift status and Caps Lock status at keypress time
+                let shift = self.pressed_keys.contains(&0x10) || self.pressed_keys.contains(&0xA0) || self.pressed_keys.contains(&0xA1);
+                let caps_lock = unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(0x14) } & 1 != 0;
+                is_uppercase = shift ^ caps_lock;
             }
 
             // Calculate millisecond offset since recording started
@@ -82,6 +89,7 @@ impl Recorder {
             self.events.push(RecordedEvent {
                 offset_ms: elapsed,
                 event: raw_event,
+                is_uppercase,
             });
         }
     }
@@ -115,7 +123,7 @@ impl Recorder {
                 match evt.event {
                     RawInputEvent::Keyboard { vk, down } => {
                         play_evt.kind = if down { "keydown".to_string() } else { "keyup".to_string() };
-                        play_evt.key = Some(vk_to_string(vk));
+                        play_evt.key = Some(vk_to_string_with_case(vk, evt.is_uppercase));
                     }
                     RawInputEvent::MouseMove { x, y } => {
                         play_evt.kind = "mousemove".to_string();
@@ -148,6 +156,7 @@ impl Recorder {
             original_duration_ms: total_duration,
             playback_scale: 1.0,
             events: playback_events,
+            enabled: true,
         }
     }
 }

@@ -15,6 +15,13 @@ use tauri_plugin_autostart::MacosLauncher;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -28,17 +35,40 @@ pub fn run() {
             commands::stop_macro_playback,
             commands::listen_for_hotkey,
             commands::cancel_listen_for_hotkey,
+            commands::unregister_global_hotkeys,
+            commands::reregister_global_hotkeys,
             commands::save_macro_profile,
             commands::save_macro_profile_to_path,
             commands::load_macro_profile,
             commands::load_macro_profile_from_path,
             commands::update_hook_hotkeys,
+            commands::save_loadout,
+            commands::list_loadouts,
+            commands::load_loadout,
+            commands::delete_loadout,
+            commands::import_loadout,
+            commands::export_loadout,
+            commands::list_themes,
+            commands::save_custom_theme,
+            commands::delete_theme,
+            commands::get_theme_settings,
+            commands::save_theme_settings,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
-                // Intercept close button and hide window to system tray instead
-                api.prevent_close();
-                let _ = window.hide();
+                // Retrieve settings to check close behavior
+                let when_closed = if let Ok(settings) = crate::commands::get_theme_settings(window.app_handle().clone()) {
+                    settings.when_closed
+                } else {
+                    "minimize".to_string()
+                };
+
+                if when_closed == "close" {
+                    window.app_handle().exit(0);
+                } else {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .setup(|app| {
@@ -67,6 +97,13 @@ pub fn run() {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }
+            }
+
+            // Load settings to synchronize global hook state on boot
+            if let Ok(settings) = commands::get_theme_settings(app.app_handle().clone()) {
+                engine::hook::set_record_drag_motion(settings.record_drag_motion);
+            } else {
+                engine::hook::set_record_drag_motion(true);
             }
 
             // Setup crossbeam-channel for hook events

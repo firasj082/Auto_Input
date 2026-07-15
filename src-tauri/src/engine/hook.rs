@@ -4,8 +4,8 @@
 //! Events are forwarded off the OS message thread via crossbeam-channel.
 //! Filters synthetic/injected inputs to avoid recursive loops.
 
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, AtomicBool, AtomicI32, Ordering};
+use std::sync::{OnceLock, Mutex};
 use std::time::Instant;
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
@@ -15,13 +15,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
     KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL,
     WM_KEYDOWN, WM_SYSKEYDOWN,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_RBUTTONDOWN, WM_RBUTTONUP,
-    WM_MBUTTONDOWN, WM_MBUTTONUP, HHOOK,
+    WM_MBUTTONDOWN, WM_MBUTTONUP, WM_MOUSEMOVE, HHOOK,
 };
 
 use crate::engine::constants::{LLKHF_INJECTED, LLMHF_INJECTED};
 
 /// Mouse buttons mapped by the hook.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MouseButton {
     /// Left click button.
@@ -87,6 +87,17 @@ pub static STATE: AtomicU32 = AtomicU32::new(0); // 0=Idle, 1=ConfiguringRecord,
 static RECORD_TOGGLE_VK: AtomicU32 = AtomicU32::new(0x78); // VK_F9
 static START_SEQUENCE_VK: AtomicU32 = AtomicU32::new(0x79); // VK_F10
 
+// Settings option: toggles capturing MouseMove events while a click is held
+pub static RECORD_DRAG_MOTION: AtomicBool = AtomicBool::new(true);
+
+// Count of currently pressed mouse buttons to detect drags
+static HELD_BUTTONS_COUNT: AtomicI32 = AtomicI32::new(0);
+
+// Throttling statics for MouseMove capture
+static LAST_MOVE_X: AtomicI32 = AtomicI32::new(-9999);
+static LAST_MOVE_Y: AtomicI32 = AtomicI32::new(-9999);
+static LAST_MOVE_TIME: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+
 // Channel sender for forwarding hook events to the consumer thread
 static EVENT_TX: OnceLock<crossbeam_channel::Sender<HookEvent>> = OnceLock::new();
 
@@ -111,101 +122,169 @@ pub fn set_hook_hotkeys(record_vk: u32, start_vk: u32) {
     START_SEQUENCE_VK.store(start_vk, Ordering::SeqCst);
 }
 
+/// Sets the dynamic mouse drag recording state.
+pub fn set_record_drag_motion(enabled: bool) {
+    RECORD_DRAG_MOTION.store(enabled, Ordering::SeqCst);
+}
+
 /// Low-level keyboard hook callback procedure.
 ///
 /// Filters out injected events and intercepts hotkeys synchronously.
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let data = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        
-        // Filter out injected input (e.g. from our own SendInput simulation)
-        if (data.flags.0 & LLKHF_INJECTED) != 0 {
-            // SAFETY: Forwarding synthetic inputs to prevent feedback loops
-            return CallNextHookEx(None, code, wparam, lparam);
-        }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if code >= 0 {
+            let data = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+            
+            // Filter out injected input (e.g. from our own SendInput simulation)
+            if (data.flags.0 & LLKHF_INJECTED) != 0 {
+                return None; // None means proceed to CallNextHookEx
+            }
 
-        let vk = data.vkCode;
-        let down = wparam.0 as u32 == WM_KEYDOWN as u32 || wparam.0 as u32 == WM_SYSKEYDOWN as u32;
-        
-        let state = STATE.load(Ordering::SeqCst);
-        if state != 0 {
-            eprintln!("[KEYHOOK] vk: 0x{:X}, down: {}, state: {}", vk, down, state);
-        }
-        let mut swallow = false;
+            let vk = data.vkCode;
+            let down = wparam.0 as u32 == WM_KEYDOWN as u32 || wparam.0 as u32 == WM_SYSKEYDOWN as u32;
+            let state = STATE.load(Ordering::SeqCst);
+            let mut swallow = false;
 
-        // 1 & 2 represent Configuring states (ConfiguringRecord & ConfiguringStart)
-        if state == 1 || state == 2 {
-            // Do NOT swallow the key or send it to the event channel.
-            // Let it pass through to the WebView so the browser's keydown handler captures it.
-            swallow = false;
-        } else {
-            // Only send standard keyboard events if recording, or if playing and the key is ESC (panic key)
-            if state == 3 || (state == 4 && vk == 0x1B) {
-                if vk == 0x1B {
-                    swallow = true;
-                }
-                if let Some(tx) = EVENT_TX.get() {
-                    let _ = tx.try_send(HookEvent {
-                        event: RawInputEvent::Keyboard { vk, down },
-                        time: Instant::now(),
-                    });
+            // 1 & 2 represent Configuring states (ConfiguringRecord & ConfiguringStart)
+            if state == 1 || state == 2 {
+                swallow = false;
+            } else {
+                // Only send standard keyboard events if recording, or if playing and the key is ESC (panic key)
+                if state == 3 || (state == 4 && vk == 0x1B) {
+                    if vk == 0x1B {
+                        swallow = true;
+                    }
+                    if let Some(tx) = EVENT_TX.get() {
+                        let _ = tx.try_send(HookEvent {
+                            event: RawInputEvent::Keyboard { vk, down },
+                            time: Instant::now(),
+                        });
+                    }
                 }
             }
-        }
 
-        if swallow {
-            return LRESULT(1);
+            if swallow {
+                return Some(LRESULT(1));
+            }
         }
+        None
+    }));
+
+    match result {
+        Ok(Some(res)) => res,
+        _ => CallNextHookEx(None, code, wparam, lparam),
     }
-    
-    // SAFETY: Standard delegation to the next hook in the Windows hook chain.
-    CallNextHookEx(None, code, wparam, lparam)
 }
 
 /// Low-level mouse hook callback procedure.
 ///
 /// Captures coordinates and buttons if recording. Filters injected inputs.
 unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        let data = &*(lparam.0 as *const MSLLHOOKSTRUCT);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if code >= 0 {
+            let data = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
 
-        // Filter out injected input (e.g. from our own simulated output)
-        if (data.flags & LLMHF_INJECTED) != 0 {
-            // SAFETY: Propagate synthetic clicks to prevent lockups.
-            return CallNextHookEx(None, code, wparam, lparam);
-        }
+            // Filter out injected input (e.g. from our own simulated output)
+            if (data.flags & LLMHF_INJECTED) != 0 {
+                return None; // None means proceed to CallNextHookEx
+            }
 
-        let state = STATE.load(Ordering::SeqCst);
-        
-        // 3 represents Recording state
-        if state == 3 {
-            let x = data.pt.x;
-            let y = data.pt.y;
-            let msg = wparam.0 as u32;
+            let state = STATE.load(Ordering::SeqCst);
+            
+            // 3 represents Recording state
+            if state == 3 {
+                let x = data.pt.x;
+                let y = data.pt.y;
+                let msg = wparam.0 as u32;
 
-            let event = match msg {
-                WM_LBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Left, x, y }),
-                WM_LBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Left, x, y }),
-                WM_RBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Right, x, y }),
-                WM_RBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Right, x, y }),
-                WM_MBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Middle, x, y }),
-                WM_MBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Middle, x, y }),
-                _ => None,
-            };
+                // Handle button hold state tracking & baseline resets
+                if msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN {
+                    HELD_BUTTONS_COUNT.fetch_add(1, Ordering::SeqCst);
 
-            if let Some(evt) = event {
-                if let Some(tx) = EVENT_TX.get() {
-                    let _ = tx.try_send(HookEvent {
-                        event: evt,
-                        time: Instant::now(),
+                    // Reset baseline coordinates and time when a new drag begins
+                    LAST_MOVE_X.store(x, Ordering::SeqCst);
+                    LAST_MOVE_Y.store(y, Ordering::SeqCst);
+                    if let Some(mutex) = LAST_MOVE_TIME.get() {
+                        if let Ok(mut guard) = mutex.lock() {
+                            *guard = Some(Instant::now());
+                        }
+                    }
+                } else if msg == WM_LBUTTONUP || msg == WM_RBUTTONUP || msg == WM_MBUTTONUP {
+                    // Saturating decrement: decrement button count without dropping below 0
+                    let _ = HELD_BUTTONS_COUNT.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |val| {
+                        Some(std::cmp::max(0, val - 1))
                     });
+                }
+
+                let mut event_to_send = None;
+
+                if msg == WM_MOUSEMOVE {
+                    if RECORD_DRAG_MOTION.load(Ordering::SeqCst) && HELD_BUTTONS_COUNT.load(Ordering::SeqCst) > 0 {
+                        let now = Instant::now();
+                        let mut elapsed_ok = false;
+                        if let Some(mutex) = LAST_MOVE_TIME.get() {
+                            if let Ok(guard) = mutex.lock() {
+                                if let Some(last_time) = *guard {
+                                    if now.duration_since(last_time).as_millis() >= 20 {
+                                        elapsed_ok = true;
+                                    }
+                                } else {
+                                    elapsed_ok = true;
+                                }
+                            }
+                        } else {
+                            elapsed_ok = true;
+                        }
+
+                        let last_x = LAST_MOVE_X.load(Ordering::SeqCst);
+                        let last_y = LAST_MOVE_Y.load(Ordering::SeqCst);
+                        let distance_ok = if last_x == -9999 || last_y == -9999 {
+                            true
+                        } else {
+                            (x - last_x).abs() >= 5 || (y - last_y).abs() >= 5
+                        };
+
+                        // OR Logic for throttling: either elapsed 20ms OR moved 5px
+                        if elapsed_ok || distance_ok {
+                            LAST_MOVE_X.store(x, Ordering::SeqCst);
+                            LAST_MOVE_Y.store(y, Ordering::SeqCst);
+                            if let Some(mutex) = LAST_MOVE_TIME.get() {
+                                if let Ok(mut guard) = mutex.lock() {
+                                    *guard = Some(now);
+                                }
+                            }
+                            event_to_send = Some(RawInputEvent::MouseMove { x, y });
+                        }
+                    }
+                } else {
+                    event_to_send = match msg {
+                        WM_LBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Left, x, y }),
+                        WM_LBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Left, x, y }),
+                        WM_RBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Right, x, y }),
+                        WM_RBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Right, x, y }),
+                        WM_MBUTTONDOWN => Some(RawInputEvent::MouseDown { button: MouseButton::Middle, x, y }),
+                        WM_MBUTTONUP => Some(RawInputEvent::MouseUp { button: MouseButton::Middle, x, y }),
+                        _ => None,
+                    };
+                }
+
+                if let Some(evt) = event_to_send {
+                    if let Some(tx) = EVENT_TX.get() {
+                        let _ = tx.try_send(HookEvent {
+                            event: evt,
+                            time: Instant::now(),
+                        });
+                    }
                 }
             }
         }
-    }
+        None
+    }));
 
-    // SAFETY: Standard delegation to the next hook in the Windows hook chain.
-    CallNextHookEx(None, code, wparam, lparam)
+    match result {
+        Ok(Some(res)) => res,
+        _ => CallNextHookEx(None, code, wparam, lparam),
+    }
 }
 
 /// Initializes and starts the low-level Windows keyboard and mouse hooks.
@@ -215,6 +294,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
 /// Returns an error string if thread creation or hook registration fails.
 pub fn start_hooks(tx: crossbeam_channel::Sender<HookEvent>) -> Result<(), String> {
     EVENT_TX.set(tx).map_err(|_| "Hooks channel already initialized".to_string())?;
+    let _ = LAST_MOVE_TIME.set(Mutex::new(None));
 
     std::thread::Builder::new()
         .name("hook-thread".to_string())

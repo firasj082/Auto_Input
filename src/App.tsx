@@ -1,14 +1,19 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { useSequence } from "./hooks/useSequence";
+import { useTheme } from "./hooks/useTheme";
 import { HotkeyField } from "./components/HotkeyField";
-import { RecordButton } from "./components/RecordButton";
+import { PrimaryActionButton } from "./components/PrimaryActionButton";
 import { ActionsList } from "./components/ActionsList";
 import { LoopControl } from "./components/LoopControl";
-import { AddManualActionModal } from "./components/AddManualActionModal";
+import { AddActionModal } from "./components/AddActionModal";
 import { ConflictWarningModal } from "./components/ConflictWarningModal";
-import type { MacroProfile } from "./types/sequence";
+import { SaveLoadoutModal } from "./components/SaveLoadoutModal";
+import { LoadoutTab } from "./components/LoadoutTab";
+import { SettingsTab } from "./components/SettingsTab";
+import { SideRail } from "./components/SideRail";
+import type { Loadout } from "./types/sequence";
 
 /**
  * Main application component.
@@ -37,13 +42,16 @@ export default function App() {
     cancelListenForHotkey,
     saveProfile,
     importProfile,
-    getExportProfile,
   } = useSequence();
 
+  const { themes, activeThemeId, recordDragMotion, whenClosed, selectTheme, setRecordDragMotion, setWhenClosed, saveCustomTheme, deleteTheme } = useTheme();
+
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isSaveLoadoutOpen, setIsSaveLoadoutOpen] = useState(false);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [isOverlayMode, setIsOverlayMode] = useState(false);
   const [overlayTimer, setOverlayTimer] = useState("00:00");
+  const [activeTab, setActiveTab] = useState<"timeline" | "loadout" | "settings">("timeline");
 
   const prevHotkeysRef = useRef(hotkeys);
 
@@ -59,19 +67,34 @@ export default function App() {
     }
   }, []);
 
-  // Timer interval for the visual recording overlay
+  // Timer interval for the visual recording overlay.
+  // Overlay windows are reused (hidden/shown), so we listen for the
+  // backend's 'reset-timer' event to restart the counter each session.
   useEffect(() => {
     if (!isOverlayMode) return;
 
-    let seconds = 0;
-    const interval = setInterval(() => {
-      seconds += 1;
-      const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-      const ss = String(seconds % 60).padStart(2, "0");
-      setOverlayTimer(`${mm}:${ss}`);
-    }, 1000);
+    let startedAt = Date.now();
 
-    return () => clearInterval(interval);
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+      const ss = String(elapsed % 60).padStart(2, "0");
+      setOverlayTimer(`${mm}:${ss}`);
+    };
+
+    tick(); // show 00:00 immediately
+    const interval = setInterval(tick, 1000);
+
+    let unlisten: (() => void) | null = null;
+    listen("reset-timer", () => {
+      startedAt = Date.now();
+      setOverlayTimer("00:00");
+    }).then((fn) => { unlisten = fn; });
+
+    return () => {
+      clearInterval(interval);
+      if (unlisten) unlisten();
+    };
   }, [isOverlayMode]);
 
   // Check conflicts after hotkeys update
@@ -111,48 +134,32 @@ export default function App() {
     saveProfile();
   }, [items, repeat, saveProfile]);
 
-  const handleImport = async () => {
+  const handleSaveLoadout = async (name: string, description: string) => {
     try {
-      const selected = await open({
-        multiple: false,
-        filters: [{ name: "JSON Configuration", extensions: ["json"] }],
-      });
-
-      if (selected && typeof selected === "string") {
-        // Read file contents via custom backend command to bypass webview file restrictions
-        const data = await invoke<MacroProfile>("load_macro_profile_from_path", {
-          path: selected,
-        });
-        
-        if (data.appId === "macro-app" && data.sequence) {
-          importProfile(data);
-        } else {
-          alert("Invalid macro profile file.");
-        }
-      }
+      const loadout: Loadout = {
+        id: crypto.randomUUID(),
+        name,
+        description,
+        sequence: { repeat, items },
+        version: 1,
+        lastUsedAt: 0,
+        lastUpdatedAt: 0,
+      };
+      await invoke("save_loadout", { loadout });
+      setIsSaveLoadoutOpen(false);
     } catch (err) {
-      console.error("Failed to import profile:", err);
+      console.error("Failed to save loadout:", err);
     }
   };
 
-  const handleExport = async () => {
-    try {
-      const path = await save({
-        filters: [{ name: "JSON Configuration", extensions: ["json"] }],
-        defaultPath: "profile.json",
-      });
-
-      if (path) {
-        const profile = getExportProfile();
-        // Invoke backend command to save profile data structure directly to target path
-        await invoke("save_macro_profile_to_path", {
-          profile,
-          path,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to export profile:", err);
-    }
+  const handleLoadLoadout = (loadout: Loadout) => {
+    importProfile({
+      version: 1,
+      appId: "macro-app",
+      hotkeys,
+      sequence: loadout.sequence,
+    });
+    setActiveTab("timeline");
   };
 
   if (isOverlayMode) {
@@ -179,175 +186,163 @@ export default function App() {
   const isRecordDisabled = isPlaying;
 
   return (
-    <div className="app-container">
-      {/* Header section with branding & hotkeys */}
-      <header
-        className="panel-glass"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "20px",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-          <h1
+    <div className="app-shell">
+      <SideRail activeTab={activeTab} onTabChange={setActiveTab} />
+      <div className="app-container">
+
+      {activeTab === "timeline" && (
+        <>
+          {/* Header section with branding & hotkeys */}
+          <header
+            className="panel-glass"
             style={{
-              fontSize: "24px",
-              fontWeight: "800",
-              background: "var(--gradient-accent)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              letterSpacing: "-0.02em",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "20px",
+              flexWrap: "wrap",
             }}
           >
-            Auto Input
-          </h1>
-          <span style={{ fontSize: "11px", color: "var(--text-muted)", fontWeight: "500" }}>
-            Windows Auto-Clicker & Macro Engine
-          </span>
-        </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+              <h1
+                style={{
+                  fontSize: "24px",
+                  fontWeight: "800",
+                  color: "var(--text-primary)",
+                  letterSpacing: "-0.02em",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                }}
+              >
+                <span style={{ color: "var(--accent)" }}>●</span>
+                Auto Input
+              </h1>
+              <span style={{ fontSize: "11px", color: "var(--text-secondary)", fontWeight: "500" }}>
+                Windows Auto-Clicker & Macro Engine
+              </span>
+            </div>
 
-        <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
-          <HotkeyField
-            label="Record Toggle"
-            currentKey={hotkeys.recordToggle}
-            isListening={isListening === "recordToggle"}
-            onStartListening={() => handleStartListening("recordToggle")}
-            onCancelListening={handleCancelListening}
-            onKeyCapture={(keyName) => handleKeyCapture("recordToggle", keyName)}
-          />
-          <HotkeyField
-            label="Start Sequence"
-            currentKey={hotkeys.startSequence}
-            isListening={isListening === "startSequence"}
-            onStartListening={() => handleStartListening("startSequence")}
-            onCancelListening={handleCancelListening}
-            onKeyCapture={(keyName) => handleKeyCapture("startSequence", keyName)}
-          />
+            <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", alignItems: "center" }}>
+              <HotkeyField
+                label="Record Toggle"
+                currentKey={hotkeys.recordToggle}
+                isListening={isListening === "recordToggle"}
+                onStartListening={() => handleStartListening("recordToggle")}
+                onCancelListening={handleCancelListening}
+                onKeyCapture={(keyName) => handleKeyCapture("recordToggle", keyName)}
+              />
+              <HotkeyField
+                label="Start Sequence"
+                currentKey={hotkeys.startSequence}
+                isListening={isListening === "startSequence"}
+                onStartListening={() => handleStartListening("startSequence")}
+                onCancelListening={handleCancelListening}
+                onKeyCapture={(keyName) => handleKeyCapture("startSequence", keyName)}
+              />
 
-          <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
-            <RecordButton
-              isRecording={isRecording}
-              onToggle={isRecording ? stopRecording : startRecording}
-              disabled={isRecordDisabled}
+              <PrimaryActionButton
+                isRecording={isRecording}
+                isPlaying={isPlaying}
+                isPlayDisabled={isPlayDisabled}
+                isRecordDisabled={isRecordDisabled}
+                onRecordToggle={isRecording ? stopRecording : startRecording}
+                onPlayToggle={isPlaying ? stopPlayback : startPlayback}
+                repeatMode={repeat.mode}
+                repeatCount={repeat.count}
+              />
+            </div>
+          </header>
+          {/* Timeline items list */}
+          <main className="panel-glass" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "16px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <h2 style={{ fontSize: "16px", fontWeight: "600" }}>Sequence Timeline</h2>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                  Drag rows to reorder execution sequence
+                </span>
+              </div>
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsSaveLoadoutOpen(true)}
+                  disabled={isRecording || isPlaying || items.length === 0}
+                  style={{ padding: "8px 14px", fontSize: "13px" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                    <polyline points="17 21 17 13 7 13 7 21" />
+                    <polyline points="7 3 7 8 15 8" />
+                  </svg>
+                  Save Loadout
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsAddOpen(true)}
+                  disabled={isRecording || isPlaying}
+                  style={{ padding: "8px 14px", fontSize: "13px" }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                  Add Action
+                </button>
+              </div>
+            </div>
+
+            <ActionsList
+              items={items}
+              onUpdate={updateItem}
+              onDelete={removeItem}
+              onReorder={reorderItems}
+              disabled={isRecording || isPlaying}
             />
+          </main>
 
-            <button
-              type="button"
-              className={`btn ${isPlaying ? "btn-danger" : "btn-secondary"}`}
-              onClick={isPlaying ? stopPlayback : startPlayback}
-              disabled={isPlayDisabled}
-              style={{ minWidth: "120px" }}
-            >
-              {isPlaying ? (
-                <>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <rect x="4" y="4" width="16" height="16" rx="2" />
-                  </svg>
-                  Stop
-                </>
-              ) : (
-                <>
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                  >
-                    <polygon points="5 3 19 12 5 21" />
-                  </svg>
-                  Play
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Timeline items list */}
-      <main className="panel-glass" style={{ flex: 1, display: "flex", flexDirection: "column", gap: "16px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-            <h2 style={{ fontSize: "16px", fontWeight: "600" }}>Sequence Timeline</h2>
-            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-              Drag rows to reorder execution sequence
-            </span>
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => setIsAddOpen(true)}
-            disabled={isRecording || isPlaying}
-            style={{ padding: "8px 14px", fontSize: "13px" }}
+          {/* Footer loop control */}
+          <footer
+            className="panel-glass"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "20px",
+              padding: "16px 24px",
+              flexWrap: "wrap",
+            }}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-            Add Click Action
-          </button>
-        </div>
+            <LoopControl repeat={repeat} onChange={setRepeat} disabled={isRecording || isPlaying} />
+          </footer>
+        </>
+      )}
 
-        <ActionsList
-          items={items}
-          onUpdate={updateItem}
-          onDelete={removeItem}
-          onReorder={reorderItems}
-          disabled={isRecording || isPlaying}
+      {activeTab === "loadout" && (
+        <LoadoutTab
+          currentItemsCount={items.length}
+          onLoadLoadout={handleLoadLoadout}
         />
-      </main>
+      )}
 
-      {/* Footer loop and file actions */}
-      <footer
-        className="panel-glass"
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: "20px",
-          padding: "16px 24px",
-          flexWrap: "wrap",
-        }}
-      >
-        <LoopControl repeat={repeat} onChange={setRepeat} disabled={isRecording || isPlaying} />
-
-        <div style={{ display: "flex", gap: "12px" }}>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleImport}
-            disabled={isRecording || isPlaying}
-          >
-            Import Profile
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={handleExport}
-            disabled={isRecording || isPlaying}
-          >
-            Export Profile
-          </button>
-        </div>
-      </footer>
+      {activeTab === "settings" && (
+        <SettingsTab
+          themes={themes}
+          activeThemeId={activeThemeId}
+          recordDragMotion={recordDragMotion}
+          whenClosed={whenClosed}
+          onSelectTheme={selectTheme}
+          onSaveCustomTheme={saveCustomTheme}
+          onDeleteTheme={deleteTheme}
+          onSetRecordDragMotion={setRecordDragMotion}
+          onSetWhenClosed={setWhenClosed}
+        />
+      )}
 
       {/* Popups & Modals */}
-      <AddManualActionModal
+      <AddActionModal
         isOpen={isAddOpen}
         onClose={() => setIsAddOpen(false)}
         onAdd={addItem}
@@ -357,6 +352,14 @@ export default function App() {
         onClose={() => setConflictMessage(null)}
         message={conflictMessage || ""}
       />
+      <SaveLoadoutModal
+        isOpen={isSaveLoadoutOpen}
+        onClose={() => setIsSaveLoadoutOpen(false)}
+        onSave={handleSaveLoadout}
+        items={items}
+        repeat={repeat}
+      />
+      </div>
     </div>
   );
 

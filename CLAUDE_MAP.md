@@ -32,28 +32,51 @@
   exports: ActionRow
 - `ActionsList.tsx` [component] — ActionsList renders the ordered macro items timeline.
   exports: ActionsList
-- `AddManualActionModal.tsx` [component] — AddManualActionModal provides form layout to append a manual click key action.
-  exports: AddManualActionModal
+- `AddActionModal.tsx` [component]
+  exports: AddActionModal
 - `ConflictWarningModal.tsx` [component] — ConflictWarningModal warns the user about keybinding overlaps.
   exports: ConflictWarningModal
 - `HotkeyField.tsx` [component] — HotkeyField displays a global hotkey configuration binding.
-  exports: HotkeyField
+  exports: HotkeyField, browserKeyToDisplayName
+- `InspectLoadoutModal.tsx` [component] — Formats milliseconds into a human-readable string.
+  exports: InspectLoadoutModal
+- `LoadoutTab.tsx` [component] — Formats milliseconds into a human-readable string.
+  exports: LoadoutTab
 - `LoopControl.tsx` [component] — LoopControl configures sequence loop repetitions.
   exports: LoopControl
 - `OverlayView.tsx` [component] — Read-only visual indicator shown during recording. Contains zero
   exports: OverlayView
 - `PositiveIntegerInput.tsx` [component] — PositiveIntegerInput enforces positive, non-zero numeric input validation.
   exports: PositiveIntegerInput
+- `PrimaryActionButton.tsx` [component]
+  exports: PrimaryActionButton
 - `RecordButton.tsx` [component] — RecordButton toggles the global macro recording mode.
   exports: RecordButton
+- `SaveLoadoutModal.tsx` [component] — Formats milliseconds into a human-readable string like "1.5s" or "2m 30s".
+  exports: SaveLoadoutModal
+- `SettingsTab.tsx` [component] — If set, we are editing an existing theme rather than creating a new one.
+  exports: SettingsTab
+- `SideRail.tsx` [component]
+  exports: SideRail
+
+#### src/constants/
+- `keyList.ts`
+  exports: KeyOption, KEY_LIST
 
 #### src/hooks/
+- `useKeyCapture.ts` — Captures keyboard input as a multi-key combo.
+  exports: useKeyCapture
 - `useSequence.ts` — Central state manager for the macro sequence editor.
   exports: useSequence
+- `useTheme.ts` — Lightens a hex color by a specified percentage.
+  exports: lightenHexColor, getContrastColor, applyThemeToDOM, useTheme
+
+#### src/styles/
+- `tokens.css` [style]
 
 #### src/types/
 - `sequence.ts` — Canonical data shape types for the macro sequence editor.
-  exports: MouseButton, PlaybackEvent, ManualItem, RecordedItem
+  exports: MouseButton, PlaybackEvent, ActionMode, ManualItem
 
 ### src-tauri/
 - `.gitignore` [config]
@@ -76,12 +99,12 @@
 
 #### src-tauri/src/
 - `commands.rs` — Tauri command handlers.
-  exports: init_recorder, start_recording, stop_recording, start_macro_playback
+  exports: init_recorder, spawn_panic_monitor, start_recording, stop_recording
 - `lib.rs` [entry] — Tauri core initialization library.
   exports: run
 - `main.rs` [entry]
 - `storage.rs` — Profile and settings storage.
-  exports: load_profile, save_profile
+  exports: load_profile, save_profile, get_loadouts_dir, get_themes_dir
 - `tray.rs` — System tray menu configuration.
   exports: create_tray
 
@@ -93,19 +116,19 @@
 - `hook.rs` — Low-level Win32 input hook.
   exports: MouseButton, RawInputEvent, HookEvent, set_hook_state
 - `keycodes.rs` — Keycode translation utility.
-  exports: vk_to_string, string_to_vk
+  exports: vk_to_string, string_to_vk, vk_to_string_with_case
 - `mod.rs` — Backend macro engine modules.
 - `overlay.rs` — Visual overlay manager.
   exports: show_overlays, hide_overlays
 - `player.rs` — Macro playback engine.
   exports: start_playback, stop_playback
 - `recorder.rs` — Macro recording pipeline.
-  exports: Recorder, start, record_event, stop
+  exports: Recorder, set_ignored_keys, start, record_event
 - `schema.rs` — Macro data schema definition.
   exports: PlaybackEvent, SequenceItem, RepeatConfig, HotkeysConfig
 - `shortcut.rs` — Global shortcut manager for hotkey triggers.
-  exports: key_name_to_code, init_global_shortcuts, register_hotkeys
+  exports: key_name_to_code, init_global_shortcuts, register_hotkeys, unregister_all_hotkeys
 - `state.rs` — Application state machine.
   exports: HotkeyTarget, AppState, EngineState, new
 
-> 57 files mapped across 11 directories.
+> 67 files mapped across 13 directories.

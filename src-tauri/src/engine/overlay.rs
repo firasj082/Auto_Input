@@ -3,7 +3,7 @@
 //! Spawns semi-transparent click-through overlay windows on all connected monitors
 //! during Recording mode. Utilizes Tauri's WebviewWindow and Win32 extended styles.
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Shows a transparent borderless click-through overlay window on every detected monitor.
 /// Re-uses existing windows if they were hidden from a previous recording session.
@@ -24,9 +24,12 @@ pub fn show_overlays(app_handle: &AppHandle) {
         if let Some(window) = app_handle.get_webview_window(&label) {
             let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
             let _ = window.set_size(tauri::PhysicalSize::new(size.width, size.height));
+            let _ = window.unminimize();
             let _ = window.show();
             let _ = window.set_always_on_top(true);
             let _ = window.set_ignore_cursor_events(true);
+            // Signal the webview to reset its recording timer
+            let _ = window.emit("reset-timer", ());
             continue;
         }
 
@@ -45,6 +48,7 @@ pub fn show_overlays(app_handle: &AppHandle) {
             .inner_size(size.width as f64 / scale, size.height as f64 / scale)
             .on_page_load(|window, payload| {
                 if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                    let _ = window.unminimize();
                     let _ = window.show();
                     let _ = window.set_always_on_top(true);
                 }
@@ -52,6 +56,20 @@ pub fn show_overlays(app_handle: &AppHandle) {
 
         if let Ok(window) = builder.build() {
             let _ = window.set_ignore_cursor_events(true);
+            let w = window.clone();
+            window.on_window_event(move |event| {
+                match event {
+                    tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_) => {
+                        let state = crate::engine::hook::STATE.load(std::sync::atomic::Ordering::SeqCst);
+                        if (state == 3 || state == 4) && w.is_minimized().unwrap_or(false) {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_always_on_top(true);
+                        }
+                    }
+                    _ => {}
+                }
+            });
         }
     }
 }

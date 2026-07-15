@@ -18,14 +18,14 @@ export const ConflictWarningModal: React.FC<Props> = ({
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ borderColor: "var(--accent-yellow)" }}>
+      <div className="modal-content" style={{ borderColor: "var(--status-warning)" }}>
         <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
           <svg
             width="28"
             height="28"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="var(--accent-yellow)"
+            stroke="var(--status-warning)"
             strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -34,7 +34,7 @@ export const ConflictWarningModal: React.FC<Props> = ({
             <line x1="12" y1="9" x2="12" y2="13" />
             <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
-          <h3 className="modal-header" style={{ color: "var(--accent-yellow)" }}>
+          <h3 className="modal-header" style={{ color: "var(--status-warning)" }}>
             Hotkey Conflict
           </h3>
         </div>
