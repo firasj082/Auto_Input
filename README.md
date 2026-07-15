@@ -2,7 +2,7 @@
 
 A lightweight Windows desktop macro recorder and playback tool built with **Tauri v2** (Rust + React/TypeScript). Auto-Input captures keyboard and mouse input using low-level Win32 hooks and replays it with precise timing.
 
-[![Latest Release](https://img.shields.io/github/v/release/firasj082/auto-input?label=Download&style=for-the-badge)](https://github.com/firasj082/auto-input/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/firasj082/auto-input?label=Download&style=for-the-badge)](https://github.com/firasj082/Auto_Input/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue?style=for-the-badge)](#)
 
 ---
@@ -22,7 +22,7 @@ A lightweight Windows desktop macro recorder and playback tool built with **Taur
 
 ### Option 1: Download the installer (recommended)
 
-Download the latest Windows installer from the [Releases page](https://github.com/firasj082/auto-input/releases/latest).
+Download the latest Windows installer from the [Releases page](https://github.com/firasj082/Auto_Input/releases/latest).
 
 1. Download `auto-input-setup.exe` (or `.msi`) from the latest release
 2. Run the installer
